@@ -7,30 +7,35 @@
 
 local PORTAL_NAME = "interplanetary-portal"
 
-local WARP_MODULES = {
-  ["warp-module-nauvis"]   = {surface = "nauvis",   label = "Nauvis"},
-  ["warp-module-vulcanus"] = {surface = "vulcanus",  label = "Vulcanus"},
-  ["warp-module-fulgora"]  = {surface = "fulgora",   label = "Fulgora"},
-  ["warp-module-gleba"]    = {surface = "gleba",     label = "Gleba"},
-  ["warp-module-aquilo"]   = {surface = "aquilo",    label = "Aquilo"},
+-- Ordered list of travel destinations, each tied to the warp module that unlocks it.
+local DESTINATIONS = {
+  {module = "warp-module-nauvis",   surface = "nauvis",   label = "Nauvis"},
+  {module = "warp-module-vulcanus", surface = "vulcanus", label = "Vulcanus"},
+  {module = "warp-module-fulgora",  surface = "fulgora",  label = "Fulgora"},
+  {module = "warp-module-gleba",    surface = "gleba",    label = "Gleba"},
+  {module = "warp-module-aquilo",   surface = "aquilo",   label = "Aquilo"},
 }
 
 -- When installed in a portal, lets travellers carry their inventory through
 -- instead of having to empty it first. Not a destination, so it's deliberately
--- absent from WARP_MODULES.
+-- absent from DESTINATIONS.
 local CARGO_MODULE = "warp-module-cargo"
 
-local PORTAL_GUI = "portal_frame"
+local COLOR_READY    = "[color=#5fd35f]"
+local COLOR_MISSING  = "[color=#9e9e9e]"
+local COLOR_END      = "[/color]"
+
+-- Custom panel docked onto the portal's native inventory window.
+local PORTAL_RELATIVE = "portal_travel_panel"
 
 ------------------------------------------------------------
 -- Initialisation
 ------------------------------------------------------------
 
 local function init_storage()
-  storage.player_portal          = storage.player_portal or {}
-  storage.player_managing_portal = storage.player_managing_portal or {}
-  storage.portal_renders         = storage.portal_renders or {}
-  storage.teleporting            = storage.teleporting or {}
+  storage.player_portal  = storage.player_portal or {}
+  storage.portal_renders = storage.portal_renders or {}
+  storage.teleporting    = storage.teleporting or {}
 end
 
 local function create_portal_animation(entity)
@@ -199,7 +204,7 @@ local function drive_teleports()
   end
 end
 
-script.on_event(defines.events.on_tick, drive_teleports)
+-- on_tick is registered near the end of the file so it can also refresh open panels.
 
 ------------------------------------------------------------
 -- Build limit: one portal per surface
@@ -240,42 +245,113 @@ script.on_event(defines.events.on_robot_built_entity, enforce_build_limit,
 -- Portal GUI helpers
 ------------------------------------------------------------
 
-local function get_installed_destinations(portal_entity)
-  local inv  = portal_entity.get_inventory(defines.inventory.chest)
-  local seen = {}
-  local dests = {}
-  for i = 1, #inv do
-    local stack = inv[i]
-    if stack.valid_for_read then
-      local mod = WARP_MODULES[stack.name]
-      if mod and not seen[mod.surface] then
-        seen[mod.surface] = true
-        table.insert(dests, {surface = mod.surface, label = mod.label})
-      end
-    end
-  end
-  return dests
+local function portal_module_count(portal_entity, item_name)
+  local inv = portal_entity.get_inventory(defines.inventory.chest)
+  return inv and inv.get_item_count(item_name) or 0
 end
 
 local function portal_allows_cargo(portal_entity)
-  local inv = portal_entity.get_inventory(defines.inventory.chest)
-  for i = 1, #inv do
-    local stack = inv[i]
-    if stack.valid_for_read and stack.name == CARGO_MODULE then
-      return true
-    end
-  end
-  return false
+  return portal_module_count(portal_entity, CARGO_MODULE) > 0
+end
+
+-- Resolve the portal entity the player currently has open from stored coords.
+local function get_player_portal(player)
+  local pdata = storage.player_portal[player.index]
+  if not pdata then return nil end
+  local surface = game.surfaces[pdata.surface_name]
+  local portal  = surface and surface.find_entity(PORTAL_NAME, pdata.position)
+  if portal and portal.valid then return portal end
+  return nil
 end
 
 local function close_portal_gui(player)
   storage.player_portal[player.index] = nil
-  local frame = player.gui.screen[PORTAL_GUI]
-  if frame and frame.valid then
-    frame.destroy()
+  local panel = player.gui.relative[PORTAL_RELATIVE]
+  if panel and panel.valid then
+    panel.destroy()
   end
 end
 
+-- One row: planet icon + name/status + travel button (grey until module installed).
+local function add_destination_card(parent, dest, installed)
+  local card = parent.add{type = "frame", style = "deep_frame_in_shallow_frame", direction = "horizontal"}
+  card.style.padding = 8
+  card.style.minimal_width = 280
+
+  local row = card.add{type = "flow", direction = "horizontal"}
+  row.style.vertical_align = "center"
+  row.style.horizontal_spacing = 12
+  row.style.horizontally_stretchable = true
+
+  local icon = row.add{type = "sprite", sprite = "item/" .. dest.module, resize_to_sprite = false}
+  icon.style.size = 32
+
+  local info = row.add{type = "flow", direction = "vertical"}
+  info.style.horizontally_stretchable = true
+  info.style.vertical_spacing = 2
+  info.add{type = "label", caption = dest.label, style = "caption_label"}
+  info.add{
+    type    = "label",
+    caption = installed
+      and (COLOR_READY .. "Ready" .. COLOR_END)
+      or  (COLOR_MISSING .. "Module required" .. COLOR_END),
+  }
+
+  local btn = row.add{
+    type    = "button",
+    name    = "portal_travel_" .. dest.surface,
+    caption = "Travel",
+    style   = installed and "confirm_button" or "button",
+    enabled = installed,
+    tooltip = installed and ("Travel to " .. dest.label)
+      or "Drop the warp module into the portal to enable travel",
+  }
+  btn.style.minimal_width = 90
+end
+
+-- (Re)fill the destination panel from current portal contents.
+local function populate_list(list, portal)
+  list.clear()
+
+  list.add{
+    type    = "label",
+    caption = "Drop warp modules into the portal, then pick a destination.",
+    style   = "label",
+  }
+
+  for _, dest in ipairs(DESTINATIONS) do
+    add_destination_card(list, dest, portal_module_count(portal, dest.module) > 0)
+  end
+
+  list.add{type = "line"}
+
+  -- Cargo module status (a modifier, so no travel button).
+  local cargo_on = portal_allows_cargo(portal)
+  local card = list.add{type = "frame", style = "deep_frame_in_shallow_frame", direction = "horizontal"}
+  card.style.padding = 8
+  card.style.minimal_width = 280
+
+  local row = card.add{type = "flow", direction = "horizontal"}
+  row.style.vertical_align = "center"
+  row.style.horizontal_spacing = 12
+  row.style.horizontally_stretchable = true
+
+  local icon = row.add{type = "sprite", sprite = "item/" .. CARGO_MODULE, resize_to_sprite = false}
+  icon.style.size = 32
+
+  local info = row.add{type = "flow", direction = "vertical"}
+  info.style.horizontally_stretchable = true
+  info.style.vertical_spacing = 2
+  info.add{type = "label", caption = "Cargo Module", style = "caption_label"}
+  info.add{
+    type    = "label",
+    caption = cargo_on
+      and (COLOR_READY .. "Inventory travels with you" .. COLOR_END)
+      or  (COLOR_MISSING .. "Inventory must be emptied to travel" .. COLOR_END),
+  }
+end
+
+-- Dock the destination panel onto the portal's native inventory window.
 local function open_portal_gui(player, entity)
   close_portal_gui(player)
 
@@ -284,46 +360,57 @@ local function open_portal_gui(player, entity)
     position     = entity.position,
   }
 
-  local dests = get_installed_destinations(entity)
-
-  local frame = player.gui.screen.add{
+  local frame = player.gui.relative.add{
     type      = "frame",
-    name      = PORTAL_GUI,
-    caption   = "Interplanetary Portal",
+    name      = PORTAL_RELATIVE,
+    caption   = "Travel",
+    direction = "vertical",
+    anchor    = {
+      gui      = defines.relative_gui_type.container_gui,
+      position = defines.relative_gui_position.right,
+      name     = PORTAL_NAME,  -- only dock onto the portal, not other chests
+    },
+  }
+
+  local content = frame.add{
+    type      = "frame",
+    name      = "portal_content",
+    style     = "inside_shallow_frame",
     direction = "vertical",
   }
-  frame.auto_center = true
+  local list = content.add{type = "flow", name = "portal_list", direction = "vertical"}
+  list.style.padding = 12
+  list.style.vertical_spacing = 8
 
-  if #dests == 0 then
-    frame.add{type = "label", caption = "No warp modules installed."}
-  else
-    frame.add{type = "label", caption = "Select destination:"}
-    for _, dest in ipairs(dests) do
-      frame.add{
-        type    = "button",
-        name    = "portal_travel_" .. dest.surface,
-        caption = "Travel to " .. dest.label,
-        style   = "confirm_button",
-      }
+  populate_list(list, entity)
+end
+
+-- Track the installed-module signature so the panel only rebuilds when it changes.
+local panel_signatures = {}
+
+local function portal_signature(portal)
+  local parts = {}
+  for _, dest in ipairs(DESTINATIONS) do
+    parts[#parts + 1] = portal_module_count(portal, dest.module) > 0 and "1" or "0"
+  end
+  parts[#parts + 1] = portal_allows_cargo(portal) and "1" or "0"
+  return table.concat(parts)
+end
+
+-- Refresh open panels as players drag modules in/out (no inventory-change event for chests).
+local function refresh_open_panels()
+  for player_index in pairs(storage.player_portal) do
+    local player = game.get_player(player_index)
+    local panel  = player and player.gui.relative[PORTAL_RELATIVE]
+    local portal = player and get_player_portal(player)
+    if player and panel and panel.valid and portal then
+      local sig = portal_signature(portal)
+      if panel_signatures[player_index] ~= sig then
+        panel_signatures[player_index] = sig
+        populate_list(panel.portal_content.portal_list, portal)
+      end
     end
   end
-
-  frame.add{type = "line"}
-
-  local flow = frame.add{type = "flow", direction = "horizontal"}
-  flow.style.horizontal_spacing = 8
-  flow.add{
-    type    = "button",
-    name    = "portal_manage_button",
-    caption = "Manage Modules",
-  }
-  flow.add{
-    type    = "button",
-    name    = "portal_cancel_button",
-    caption = "Close",
-  }
-
-  player.opened = frame
 end
 
 ------------------------------------------------------------
@@ -342,13 +429,8 @@ script.on_event(defines.events.on_gui_opened, function(event)
     return
   end
 
-  -- "Manage Modules" was clicked: let the native inventory open once, then clear the flag
-  if storage.player_managing_portal[player.index] then
-    storage.player_managing_portal[player.index] = nil
-    return
-  end
-
-  player.opened = nil
+  -- Let the native inventory window open (modules are dragged in/out there);
+  -- dock the destination panel onto it.
   open_portal_gui(player, entity)
 end)
 
@@ -360,39 +442,15 @@ script.on_event(defines.events.on_gui_click, function(event)
   local element = event.element
   if not element or not element.valid then return end
   local player = game.get_player(event.player_index)
-
-  if element.name == "portal_cancel_button" then
-    close_portal_gui(player)
-    return
-  end
-
-  if element.name == "portal_manage_button" then
-    local pdata = storage.player_portal[player.index]
-    if not pdata then return end
-
-    local src_surface = game.surfaces[pdata.surface_name]
-    local portal = src_surface and src_surface.find_entity(PORTAL_NAME, pdata.position)
-
-    close_portal_gui(player)  -- clears storage.player_portal before we use portal below
-
-    if portal and portal.valid then
-      storage.player_managing_portal[player.index] = true
-      player.opened = portal
-    end
-    return
-  end
+  local name   = element.name
 
   -- Travel buttons are named "portal_travel_<surface>"
   local prefix = "portal_travel_"
-  if element.name:sub(1, #prefix) ~= prefix then return end
-  local dest_planet = element.name:sub(#prefix + 1)
+  if name:sub(1, #prefix) ~= prefix then return end
+  local dest_planet = name:sub(#prefix + 1)
 
-  local pdata = storage.player_portal[player.index]
-  if not pdata then return end
-
-  local src_surface = game.surfaces[pdata.surface_name]
-  local portal = src_surface and src_surface.find_entity(PORTAL_NAME, pdata.position)
-  if not portal or not portal.valid then
+  local portal = get_player_portal(player)
+  if not portal then
     player.create_local_flying_text{
       text     = "Portal is no longer available!",
       position = player.position,
@@ -432,6 +490,7 @@ script.on_event(defines.events.on_gui_click, function(event)
   end
 
   close_portal_gui(player)
+  player.opened = nil  -- close the native portal window too
 
   local dest_surface
   if game.planets[dest_planet] then
@@ -468,19 +527,31 @@ end)
 ------------------------------------------------------------
 
 script.on_event(defines.events.on_gui_closed, function(event)
-  if event.element and event.element.valid
-    and event.element.name == PORTAL_GUI
-  then
-    storage.player_portal[event.player_index] = nil
+  -- When the native portal window closes, tear down the docked panel.
+  if event.entity and event.entity.valid and event.entity.name == PORTAL_NAME then
+    local player = game.get_player(event.player_index)
+    if player then close_portal_gui(player) end
+    panel_signatures[event.player_index] = nil
   end
 end)
 
 script.on_event(defines.events.on_player_left_game, function(event)
-  storage.player_portal[event.player_index]          = nil
-  storage.player_managing_portal[event.player_index] = nil
+  storage.player_portal[event.player_index] = nil
+  panel_signatures[event.player_index] = nil
   local tp = storage.teleporting[event.player_index]
   if tp then
     destroy_overlay(tp.renders)
     storage.teleporting[event.player_index] = nil
+  end
+end)
+
+------------------------------------------------------------
+-- Per-tick: drive teleports and keep open destination panels in sync
+------------------------------------------------------------
+
+script.on_event(defines.events.on_tick, function(event)
+  drive_teleports()
+  if event.tick % 12 == 0 then
+    refresh_open_panels()
   end
 end)
