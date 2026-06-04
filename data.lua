@@ -144,35 +144,27 @@ local cargo_pad_base = data.raw["cargo-landing-pad"]["cargo-landing-pad"]
 
 local function make_dumb_pad(base_pad, name, tint)
   local ent = table.deepcopy(base_pad)
-  ent.type = "simple-entity-with-owner"
-  ent.name = name
-  ent.minable = {mining_time = 2, result = name}
-  ent.placeable_by = {item = name, count = 1}
+  ent.type           = "container"
+  ent.name           = name
+  ent.inventory_size = 0
+  ent.minable        = {mining_time = 2, result = name}
+  ent.placeable_by   = {item = name, count = 1}
 
-  if ent.graphics_set then
-    ent.render_layer = ent.graphics_set.animation_render_layer or "lower-object"
-    -- The main body of the landing pad is usually in 'picture'.
-    -- The blinking lights are usually in 'animation'.
-    -- Simple entities only use one or the other, so we must prioritize the main body.
-    if ent.graphics_set.picture then
-      ent.picture = ent.graphics_set.picture
-    elseif ent.graphics_set.animation then
-      ent.animations = ent.graphics_set.animation
-    end
+  if ent.graphics_set and ent.graphics_set.picture then
+    ent.picture = ent.graphics_set.picture
   end
 
   -- Remove cargo-landing-pad specific properties
-  ent.graphics_set = nil
-  ent.inventory_size = nil
-  ent.trash_inventory_size = nil
-  ent.cargo_station_parameters = nil
-  ent.robot_animation = nil
-  ent.robot_opened_duration = nil
-  ent.circuit_connector = nil
+  ent.graphics_set              = nil
+  ent.trash_inventory_size      = nil
+  ent.cargo_station_parameters  = nil
+  ent.robot_animation           = nil
+  ent.robot_opened_duration     = nil
+  ent.circuit_connector         = nil
   ent.circuit_wire_max_distance = nil
-  ent.draw_circuit_wires = nil
-  ent.draw_copper_wires = nil
-  ent.radar_range = nil
+  ent.draw_circuit_wires        = nil
+  ent.draw_copper_wires         = nil
+  ent.radar_range               = nil
   ent.radar_visualisation_color = nil
 
   apply_tint_recursive(ent, tint)
@@ -191,10 +183,10 @@ for _, planet in ipairs(planets) do
   local portal_item = {
     type           = "item",
     name           = portal_name,
-    icon           = "__base__/graphics/icons/cargo-landing-pad.png",
-    icon_size      = 64,
+    icon           = "__interplanetary-portals__/sprite.png",
+    icon_size      = 256,
     icons          = {
-      {icon = "__base__/graphics/icons/cargo-landing-pad.png", icon_size = 64, tint = planet.tint},
+      {icon = "__interplanetary-portals__/sprite.png", icon_size = 256, tint = planet.tint},
     },
     subgroup       = "space-related",
     order          = "z[portal]-" .. planet.name,
@@ -217,10 +209,10 @@ for _, planet in ipairs(planets) do
   local tech = {
     type          = "technology",
     name          = tech_name,
-    icon          = "__base__/graphics/icons/cargo-landing-pad.png",
-    icon_size     = 64,
+    icon          = "__interplanetary-portals__/sprite.png",
+    icon_size     = 256,
     icons         = {
-      {icon = "__base__/graphics/icons/cargo-landing-pad.png", icon_size = 64, tint = planet.tint},
+      {icon = "__interplanetary-portals__/sprite.png", icon_size = 256, tint = planet.tint},
     },
     prerequisites = planet.tech_prerequisites,
     unit = DEV_MODE and {
