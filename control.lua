@@ -130,13 +130,23 @@ local TP_FADE_IN  = 90
 local TP_TELEPORT = 150
 local TP_TOTAL    = 300
 
+-- The portal grows brighter as the screen darkens, then fades out. TP_SWIRL_OUT
+-- is how many ticks the fade-out lasts; TP_SWIRL_LINGER lets it hang on a touch
+-- past the darkest point so it doesn't snap away the instant the screen blacks.
+local TP_SWIRL_OUT    = 18
+local TP_SWIRL_LINGER = 12
+local TP_SWIRL_OFF    = TP_FADE_IN + TP_SWIRL_LINGER
+
 local TP_DARK_MAX    = 0.92
 local TP_DARK_RGB    = {r = 0.02, g = 0.0, b = 0.08}
 -- Half-size (in tiles) of the blackout rectangle. Big enough to cover the whole
 -- screen even when fully zoomed out, so the fade isn't just a square in the middle.
 local TP_DARK_RADIUS = 250
 
-local function draw_teleport_overlay(player, alpha)
+-- with_swirl controls whether the giant floating portal is drawn. It only
+-- belongs to the darken-IN phase; once the screen is black it's destroyed and
+-- never recreated, so the destination/fade-out overlay is drawn without it.
+local function draw_teleport_overlay(player, alpha, with_swirl)
   local char = player.character
   if not char then return {} end
   local surface = player.surface
@@ -149,17 +159,20 @@ local function draw_teleport_overlay(player, alpha)
     players      = {player},
     render_layer = "higher-object-above",
   }
-  local swirl = rendering.draw_animation{
-    animation       = "portal-animation",
-    surface         = surface,
-    target          = char,
-    x_scale         = 7,
-    y_scale         = 7,
-    animation_speed = 2,
-    tint            = {r = 1, g = 1, b = 1, a = alpha},
-    players         = {player},
-    render_layer    = "higher-object-above",
-  }
+  local swirl
+  if with_swirl then
+    swirl = rendering.draw_animation{
+      animation       = "portal-animation",
+      surface         = surface,
+      target          = char,
+      x_scale         = 7,
+      y_scale         = 7,
+      animation_speed = 2,
+      tint            = {r = 1, g = 1, b = 1, a = 0},
+      players         = {player},
+      render_layer    = "higher-object-above",
+    }
+  end
   return {dark = dark, swirl = swirl}
 end
 
@@ -172,9 +185,14 @@ local function set_overlay_alpha(renders, dark_a, swirl_a)
   end
 end
 
+local function destroy_swirl(renders)
+  if renders.swirl and renders.swirl.valid then renders.swirl.destroy() end
+  renders.swirl = nil
+end
+
 local function destroy_overlay(renders)
   if renders.dark and renders.dark.valid then renders.dark.destroy() end
-  if renders.swirl and renders.swirl.valid then renders.swirl.destroy() end
+  destroy_swirl(renders)
 end
 
 local function start_teleport(player, dest_surface, dest_pos, dest_planet)
@@ -183,7 +201,7 @@ local function start_teleport(player, dest_surface, dest_pos, dest_planet)
     dest_surface_name = dest_surface.name,
     dest_pos          = dest_pos,
     dest_planet       = dest_planet,
-    renders           = draw_teleport_overlay(player, 0),
+    renders           = draw_teleport_overlay(player, 0, true),
   }
 end
 
@@ -197,13 +215,25 @@ local function drive_teleports()
     else
       tp.t = tp.t + 1
 
-      if tp.t <= TP_FADE_IN then
-        -- Dark vignette ramps steadily to black; the swirl rises then falls
-        -- so it has fully vanished by the time the screen is black.
-        local f      = tp.t / TP_FADE_IN
-        local half   = TP_FADE_IN / 2
-        local swirl_a = (tp.t <= half) and (tp.t / half) or (1 - (tp.t - half) / half)
-        set_overlay_alpha(tp.renders, TP_DARK_MAX * f, swirl_a)
+      if tp.t < TP_SWIRL_OFF then
+        -- Dark vignette ramps steadily to black (reaching max at TP_FADE_IN, then
+        -- holding); the swirl grows brighter as the screen darkens, then fades out,
+        -- lingering a touch past the darkest point.
+        local dark_a    = TP_DARK_MAX * math.min(tp.t / TP_FADE_IN, 1)
+        local out_start = TP_SWIRL_OFF - TP_SWIRL_OUT
+        local swirl_a
+        if tp.t <= out_start then
+          swirl_a = tp.t / out_start
+        else
+          swirl_a = (TP_SWIRL_OFF - tp.t) / TP_SWIRL_OUT
+        end
+        set_overlay_alpha(tp.renders, dark_a, swirl_a)
+
+      elseif tp.t == TP_SWIRL_OFF then
+        -- Floating portal is fully faded: hard-destroy it so it's truly gone,
+        -- not just alpha-zeroed.
+        destroy_swirl(tp.renders)
+        set_overlay_alpha(tp.renders, TP_DARK_MAX, 0)
 
       elseif tp.t < TP_TELEPORT then
         set_overlay_alpha(tp.renders, TP_DARK_MAX, 0)
@@ -214,8 +244,8 @@ local function drive_teleports()
         if dest_surface and dest_surface.valid then
           player.teleport(tp.dest_pos, dest_surface)
         end
-        tp.renders = draw_teleport_overlay(player, TP_DARK_MAX)
-        set_overlay_alpha(tp.renders, TP_DARK_MAX, 0)
+        -- No swirl on the destination side; just hold the darkness and fade out.
+        tp.renders = draw_teleport_overlay(player, TP_DARK_MAX, false)
 
       else
         local f = (tp.t - TP_TELEPORT) / (TP_TOTAL - TP_TELEPORT)
