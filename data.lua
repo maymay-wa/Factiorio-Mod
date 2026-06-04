@@ -12,7 +12,7 @@ local planets = {
   {
     name = "nauvis",
     label = "Nauvis",
-    tint = {r = 0.2, g = 0.9, b = 0.3, a = 0.6},
+    tint = {r = 1.0, g = 1.0, b = 1.0, a = 1.0},
     ingredients = {
       {type = "item", name = "electronic-circuit", amount = 200},
       {type = "item", name = "iron-plate",         amount = 100},
@@ -29,7 +29,7 @@ local planets = {
   {
     name = "vulcanus",
     label = "Vulcanus",
-    tint = {r = 1.0, g = 0.45, b = 0.1, a = 0.6},
+    tint = {r = 0.957, g = 0.714, b = 0.333, a = 1.0},
     ingredients = {
       {type = "item", name = "tungsten-plate",   amount = 200},
       {type = "item", name = "tungsten-carbide",  amount = 100},
@@ -47,7 +47,7 @@ local planets = {
   {
     name = "fulgora",
     label = "Fulgora",
-    tint = {r = 0.3, g = 0.5, b = 1.0, a = 0.6},
+    tint = {r = 0.95, g = 0.25, b = 0.7, a = 1.0},
     ingredients = {
       {type = "item", name = "holmium-plate",    amount = 200},
       {type = "item", name = "superconductor",    amount = 100},
@@ -65,7 +65,7 @@ local planets = {
   {
     name = "gleba",
     label = "Gleba",
-    tint = {r = 0.7, g = 0.2, b = 0.9, a = 0.6},
+    tint = {r = 0.6, g = 1.0, b = 0.0, a = 1.0},
     ingredients = {
       {type = "item", name = "bioflux",       amount = 200},
       {type = "item", name = "carbon-fiber",   amount = 100},
@@ -83,7 +83,7 @@ local planets = {
   {
     name = "aquilo",
     label = "Aquilo",
-    tint = {r = 0.3, g = 0.9, b = 1.0, a = 0.6},
+    tint = {r = 0.25, g = 0.85, b = 1.0, a = 1.0},
     ingredients = {
       {type = "item",  name = "lithium-plate",       amount = 200},
       {type = "item",  name = "quantum-processor",    amount = 100},
@@ -153,7 +153,7 @@ local function make_dumb_pad(base_pad, name, tint)
   ent.picture = {
     filename = "__interplanetary-portals__/sprite.png",
     size     = 256,
-    scale    = 0.5,
+    scale    = 0.75,
     tint     = tint,
   }
 

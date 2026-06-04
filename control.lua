@@ -136,6 +136,13 @@ script.on_event(defines.events.on_gui_opened, function(event)
   if not PORTAL_DESTINATIONS[entity.name] then return end
 
   local player = game.get_player(event.player_index)
+
+  -- Block interaction from map/satellite view — player must be physically present
+  if player.controller_type ~= defines.controllers.character then
+    player.opened = nil
+    return
+  end
+
   player.opened = nil  -- dismiss native container GUI immediately
 
   open_portal_gui(player, entity)
