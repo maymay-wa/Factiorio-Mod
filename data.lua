@@ -150,9 +150,12 @@ local function make_dumb_pad(base_pad, name, tint)
   ent.minable        = {mining_time = 2, result = name}
   ent.placeable_by   = {item = name, count = 1}
 
-  if ent.graphics_set and ent.graphics_set.picture then
-    ent.picture = ent.graphics_set.picture
-  end
+  ent.picture = {
+    filename = "__interplanetary-portals__/sprite.png",
+    size     = 256,
+    scale    = 0.5,
+    tint     = tint,
+  }
 
   -- Remove cargo-landing-pad specific properties
   ent.graphics_set              = nil
