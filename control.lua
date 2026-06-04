@@ -77,6 +77,122 @@ script.on_event(defines.events.on_entity_died, cleanup_portal_render,
   {{filter = "name", name = PORTAL_NAME}})
 
 ------------------------------------------------------------
+-- Teleport screen effect
+------------------------------------------------------------
+--
+-- A 5-second sequence driven by on_tick:
+--   ticks   0..90   fade a dark vignette + swirling vortex IN  (1.5s)
+--   ticks  90..150  hold at full intensity                     (1.0s)
+--   tick     150    perform the actual teleport, rebuild overlay on destination
+--   ticks 150..300  fade the overlay back OUT                  (2.5s)
+-- The overlay is anchored to the player's character, so it stays
+-- screen-centred even if they move, and is only drawn for that player.
+
+local TP_FADE_IN  = 90
+local TP_TELEPORT = 150
+local TP_TOTAL    = 300
+
+local TP_DARK_MAX  = 0.92
+local TP_DARK_RGB  = {r = 0.02, g = 0.0, b = 0.08}
+
+local function draw_teleport_overlay(player, alpha)
+  local char = player.character
+  if not char then return {} end
+  local surface = player.surface
+  local dark = rendering.draw_rectangle{
+    color        = {r = TP_DARK_RGB.r, g = TP_DARK_RGB.g, b = TP_DARK_RGB.b, a = alpha},
+    filled       = true,
+    left_top     = {entity = char, offset = {-80, -80}},
+    right_bottom = {entity = char, offset = { 80,  80}},
+    surface      = surface,
+    players      = {player},
+    render_layer = "higher-object-above",
+  }
+  local swirl = rendering.draw_animation{
+    animation       = "portal-animation",
+    surface         = surface,
+    target          = char,
+    x_scale         = 7,
+    y_scale         = 7,
+    animation_speed = 2,
+    tint            = {r = 1, g = 1, b = 1, a = alpha},
+    players         = {player},
+    render_layer    = "higher-object-above",
+  }
+  return {dark = dark, swirl = swirl}
+end
+
+local function set_overlay_alpha(renders, dark_a, swirl_a)
+  if renders.dark and renders.dark.valid then
+    renders.dark.color = {r = TP_DARK_RGB.r, g = TP_DARK_RGB.g, b = TP_DARK_RGB.b, a = dark_a}
+  end
+  if renders.swirl and renders.swirl.valid then
+    renders.swirl.color = {r = 1, g = 1, b = 1, a = swirl_a}
+  end
+end
+
+local function destroy_overlay(renders)
+  if renders.dark and renders.dark.valid then renders.dark.destroy() end
+  if renders.swirl and renders.swirl.valid then renders.swirl.destroy() end
+end
+
+local function start_teleport(player, dest_surface, dest_pos, dest_planet)
+  storage.teleporting[player.index] = {
+    t                 = 0,
+    dest_surface_name = dest_surface.name,
+    dest_pos          = dest_pos,
+    dest_planet       = dest_planet,
+    renders           = draw_teleport_overlay(player, 0),
+  }
+end
+
+local function drive_teleports()
+  if next(storage.teleporting) == nil then return end
+
+  for player_index, tp in pairs(storage.teleporting) do
+    local player = game.get_player(player_index)
+    if not player or not player.valid then
+      storage.teleporting[player_index] = nil
+    else
+      tp.t = tp.t + 1
+
+      if tp.t <= TP_FADE_IN then
+        local f = tp.t / TP_FADE_IN
+        set_overlay_alpha(tp.renders, TP_DARK_MAX * f, f)
+
+      elseif tp.t < TP_TELEPORT then
+        set_overlay_alpha(tp.renders, TP_DARK_MAX, 1)
+
+      elseif tp.t == TP_TELEPORT then
+        destroy_overlay(tp.renders)
+        local dest_surface = game.surfaces[tp.dest_surface_name]
+        if dest_surface and dest_surface.valid then
+          player.teleport(tp.dest_pos, dest_surface)
+        end
+        tp.renders = draw_teleport_overlay(player, TP_DARK_MAX)
+        set_overlay_alpha(tp.renders, TP_DARK_MAX, 1)
+
+      else
+        local f = (tp.t - TP_TELEPORT) / (TP_TOTAL - TP_TELEPORT)
+        local a = 1 - f
+        set_overlay_alpha(tp.renders, TP_DARK_MAX * a, a)
+        if tp.t >= TP_TOTAL then
+          destroy_overlay(tp.renders)
+          storage.teleporting[player_index] = nil
+          player.create_local_flying_text{
+            text     = {"", "Welcome to ", tp.dest_planet, "!"},
+            position = player.position,
+            color    = {r = 0.3, g = 1, b = 0.5},
+          }
+        end
+      end
+    end
+  end
+end
+
+script.on_event(defines.events.on_tick, drive_teleports)
+
+------------------------------------------------------------
 -- Build limit: one portal per surface
 ------------------------------------------------------------
 
@@ -311,12 +427,9 @@ script.on_event(defines.events.on_gui_click, function(event)
   end
 
   local safe_pos = dest_surface.find_non_colliding_position("character", tp_pos, 10, 0.5)
-  player.teleport(safe_pos or tp_pos, dest_surface)
-  player.create_local_flying_text{
-    text     = {"", "Welcome to ", dest_planet, "!"},
-    position = safe_pos or tp_pos,
-    color    = {r = 0.3, g = 1, b = 0.5},
-  }
+
+  if storage.teleporting[player.index] then return end  -- already mid-teleport
+  start_teleport(player, dest_surface, safe_pos or tp_pos, dest_planet)
 end)
 
 ------------------------------------------------------------
@@ -334,4 +447,9 @@ end)
 script.on_event(defines.events.on_player_left_game, function(event)
   storage.player_portal[event.player_index]          = nil
   storage.player_managing_portal[event.player_index] = nil
+  local tp = storage.teleporting[event.player_index]
+  if tp then
+    destroy_overlay(tp.renders)
+    storage.teleporting[event.player_index] = nil
+  end
 end)
