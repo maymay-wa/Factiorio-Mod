@@ -36,6 +36,34 @@ local function init_storage()
   storage.player_portal  = storage.player_portal or {}
   storage.portal_renders = storage.portal_renders or {}
   storage.teleporting    = storage.teleporting or {}
+  storage.warnings       = storage.warnings or {}
+end
+
+-- Screen-anchored warning that draws on TOP of the open portal menu (flying text
+-- renders in the world, so it gets hidden behind GUI windows).
+local WARNING_NAME     = "portal_travel_warning"
+local WARNING_DURATION = 180  -- ticks (~3s)
+
+local function show_warning(player, text, color)
+  local screen = player.gui.screen
+  if screen[WARNING_NAME] then screen[WARNING_NAME].destroy() end
+
+  local frame = screen.add{type = "frame", name = WARNING_NAME}
+  frame.style.minimal_width = 460
+  frame.style.horizontal_align = "center"
+
+  local label = frame.add{type = "label", caption = text}
+  label.style.font       = "default-large-bold"
+  label.style.font_color = color or {r = 1, g = 0.4, b = 0.4}
+  label.style.single_line   = false
+  label.style.maximal_width = 430
+  label.style.horizontal_align = "center"
+
+  local res   = player.display_resolution
+  local scale = player.display_scale
+  frame.location = {x = math.floor((res.width - 460 * scale) / 2), y = math.floor(90 * scale)}
+
+  storage.warnings[player.index] = game.tick + WARNING_DURATION
 end
 
 local function create_portal_animation(entity)
@@ -102,8 +130,11 @@ local TP_FADE_IN  = 90
 local TP_TELEPORT = 150
 local TP_TOTAL    = 300
 
-local TP_DARK_MAX  = 0.92
-local TP_DARK_RGB  = {r = 0.02, g = 0.0, b = 0.08}
+local TP_DARK_MAX    = 0.92
+local TP_DARK_RGB    = {r = 0.02, g = 0.0, b = 0.08}
+-- Half-size (in tiles) of the blackout rectangle. Big enough to cover the whole
+-- screen even when fully zoomed out, so the fade isn't just a square in the middle.
+local TP_DARK_RADIUS = 250
 
 local function draw_teleport_overlay(player, alpha)
   local char = player.character
@@ -112,8 +143,8 @@ local function draw_teleport_overlay(player, alpha)
   local dark = rendering.draw_rectangle{
     color        = {r = TP_DARK_RGB.r, g = TP_DARK_RGB.g, b = TP_DARK_RGB.b, a = alpha},
     filled       = true,
-    left_top     = {entity = char, offset = {-80, -80}},
-    right_bottom = {entity = char, offset = { 80,  80}},
+    left_top     = {entity = char, offset = {-TP_DARK_RADIUS, -TP_DARK_RADIUS}},
+    right_bottom = {entity = char, offset = { TP_DARK_RADIUS,  TP_DARK_RADIUS}},
     surface      = surface,
     players      = {player},
     render_layer = "higher-object-above",
@@ -471,11 +502,7 @@ script.on_event(defines.events.on_gui_click, function(event)
       or (ammo_inv and not ammo_inv.is_empty())
 
     if holding_items then
-      player.create_local_flying_text{
-        text     = "Empty your inventory before travelling, or install a Cargo Warp Module!",
-        position = player.position,
-        color    = {r = 1, g = 0.3, b = 0.3},
-      }
+      show_warning(player, "Empty your inventory before travelling, or install a Cargo Warp Module!")
       return
     end
   end
@@ -538,6 +565,7 @@ end)
 script.on_event(defines.events.on_player_left_game, function(event)
   storage.player_portal[event.player_index] = nil
   panel_signatures[event.player_index] = nil
+  storage.warnings[event.player_index] = nil
   local tp = storage.teleporting[event.player_index]
   if tp then
     destroy_overlay(tp.renders)
@@ -551,6 +579,19 @@ end)
 
 script.on_event(defines.events.on_tick, function(event)
   drive_teleports()
+
+  if next(storage.warnings) ~= nil then
+    for index, expire in pairs(storage.warnings) do
+      if event.tick >= expire then
+        local player = game.get_player(index)
+        if player and player.gui.screen[WARNING_NAME] then
+          player.gui.screen[WARNING_NAME].destroy()
+        end
+        storage.warnings[index] = nil
+      end
+    end
+  end
+
   if event.tick % 12 == 0 then
     refresh_open_panels()
   end
