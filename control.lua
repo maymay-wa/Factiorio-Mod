@@ -135,7 +135,7 @@ local TP_TOTAL    = 300
 -- past the darkest point so it doesn't snap away the instant the screen blacks.
 local TP_SWIRL_OUT    = 18
 local TP_SWIRL_LINGER = 12
-local TP_SWIRL_OFF    = TP_FADE_IN + TP_SWIRL_LINGER
+local TP_SWIRL_OFF    = TP_FADE_IN --+ TP_SWIRL_LINGER
 
 local TP_DARK_MAX    = 0.92
 local TP_DARK_RGB    = {r = 0.02, g = 0.0, b = 0.08}
