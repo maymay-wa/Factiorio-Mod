@@ -1,24 +1,18 @@
 -- control.lua — Interplanetary Portals
--- Handles:
---   1. Click-to-open portal GUI and teleport on button press
---   2. One-per-planet build limit enforcement (players and robots)
+-- Handles portal GUI, warp module reading, teleport, and build-limit enforcement.
 
 ------------------------------------------------------------
 -- Constants
 ------------------------------------------------------------
 
--- Portal entity name → destination planet surface name
-local PORTAL_DESTINATIONS = {
-  ["nauvis-portal"]   = "nauvis",
-  ["vulcanus-portal"] = "vulcanus",
-  ["fulgora-portal"]  = "fulgora",
-  ["gleba-portal"]    = "gleba",
-  ["aquilo-portal"]   = "aquilo",
-}
+local PORTAL_NAME = "interplanetary-portal"
 
-local ALL_PORTALS = {
-  "nauvis-portal", "vulcanus-portal", "fulgora-portal",
-  "gleba-portal", "aquilo-portal",
+local WARP_MODULES = {
+  ["warp-module-nauvis"]   = {surface = "nauvis",   label = "Nauvis"},
+  ["warp-module-vulcanus"] = {surface = "vulcanus",  label = "Vulcanus"},
+  ["warp-module-fulgora"]  = {surface = "fulgora",   label = "Fulgora"},
+  ["warp-module-gleba"]    = {surface = "gleba",     label = "Gleba"},
+  ["warp-module-aquilo"]   = {surface = "aquilo",    label = "Aquilo"},
 }
 
 local PORTAL_GUI = "portal_frame"
@@ -28,56 +22,65 @@ local PORTAL_GUI = "portal_frame"
 ------------------------------------------------------------
 
 local function init_storage()
-  -- player_index → {portal_name, surface_name, position}
-  storage.player_portal = storage.player_portal or {}
+  storage.player_portal          = storage.player_portal or {}
+  storage.player_managing_portal = storage.player_managing_portal or {}
 end
 
 script.on_init(init_storage)
 script.on_configuration_changed(init_storage)
 
 ------------------------------------------------------------
--- Build-limit: one portal of each type per surface
+-- Build limit: one portal per surface
 ------------------------------------------------------------
-
-local portal_filters = {}
-for _, pname in ipairs(ALL_PORTALS) do
-  table.insert(portal_filters, {filter = "name", name = pname})
-end
 
 local function enforce_build_limit(event)
   local entity = event.entity
-  if not entity or not entity.valid then return end
+  if not entity or not entity.valid or entity.name ~= PORTAL_NAME then return end
 
-  local name    = entity.name
   local surface = entity.surface
+  if surface.count_entities_filtered{name = PORTAL_NAME} <= 1 then return end
 
-  if not PORTAL_DESTINATIONS[name] then return end
+  local pos = entity.position
+  entity.destroy()
 
-  local count = surface.count_entities_filtered{name = name}
-  if count > 1 then
-    local pos = entity.position
-    entity.destroy()
-    local player = event.player_index and game.get_player(event.player_index)
-    if player then
-      player.insert{name = name, count = 1}
-      player.create_local_flying_text{
-        text     = {"", "Only one ", name, " allowed per planet!"},
-        position = player.position,
-        color    = {r = 1, g = 0.3, b = 0.3},
-      }
-    else
-      -- Robot-built: spill item so logistics network picks it back up
-      surface.spill_item_stack(pos, {name = name, count = 1}, true)
-    end
+  local player = event.player_index and game.get_player(event.player_index)
+  if player then
+    player.insert{name = PORTAL_NAME, count = 1}
+    player.create_local_flying_text{
+      text     = "Only one portal allowed per planet!",
+      position = player.position,
+      color    = {r = 1, g = 0.3, b = 0.3},
+    }
+  else
+    surface.spill_item_stack(pos, {name = PORTAL_NAME, count = 1}, true)
   end
 end
 
-script.on_event(defines.events.on_built_entity,       enforce_build_limit, portal_filters)
-script.on_event(defines.events.on_robot_built_entity, enforce_build_limit, portal_filters)
+script.on_event(defines.events.on_built_entity,       enforce_build_limit,
+  {{filter = "name", name = PORTAL_NAME}})
+script.on_event(defines.events.on_robot_built_entity, enforce_build_limit,
+  {{filter = "name", name = PORTAL_NAME}})
 
 ------------------------------------------------------------
 -- Portal GUI helpers
 ------------------------------------------------------------
+
+local function get_installed_destinations(portal_entity)
+  local inv  = portal_entity.get_inventory(defines.inventory.chest)
+  local seen = {}
+  local dests = {}
+  for i = 1, #inv do
+    local stack = inv[i]
+    if stack.valid_for_read then
+      local mod = WARP_MODULES[stack.name]
+      if mod and not seen[mod.surface] then
+        seen[mod.surface] = true
+        table.insert(dests, {surface = mod.surface, label = mod.label})
+      end
+    end
+  end
+  return dests
+end
 
 local function close_portal_gui(player)
   storage.player_portal[player.index] = nil
@@ -90,13 +93,12 @@ end
 local function open_portal_gui(player, entity)
   close_portal_gui(player)
 
-  local dest = PORTAL_DESTINATIONS[entity.name]
-
   storage.player_portal[player.index] = {
-    portal_name  = entity.name,
     surface_name = entity.surface.name,
     position     = entity.position,
   }
+
+  local dests = get_installed_destinations(entity)
 
   local frame = player.gui.screen.add{
     type      = "frame",
@@ -106,50 +108,66 @@ local function open_portal_gui(player, entity)
   }
   frame.auto_center = true
 
-  frame.add{type = "label", caption = {"", "Destination: ", dest}}
+  if #dests == 0 then
+    frame.add{type = "label", caption = "No warp modules installed."}
+  else
+    frame.add{type = "label", caption = "Select destination:"}
+    for _, dest in ipairs(dests) do
+      frame.add{
+        type    = "button",
+        name    = "portal_travel_" .. dest.surface,
+        caption = "Travel to " .. dest.label,
+        style   = "confirm_button",
+      }
+    end
+  end
+
+  frame.add{type = "line"}
 
   local flow = frame.add{type = "flow", direction = "horizontal"}
   flow.style.horizontal_spacing = 8
   flow.add{
     type    = "button",
-    name    = "portal_travel_button",
-    caption = {"", "Travel to ", dest},
-    style   = "confirm_button",
+    name    = "portal_manage_button",
+    caption = "Manage Modules",
   }
   flow.add{
     type    = "button",
     name    = "portal_cancel_button",
-    caption = "Cancel",
+    caption = "Close",
   }
 
-  -- Register frame as the opened GUI so Escape closes it
   player.opened = frame
 end
 
 ------------------------------------------------------------
--- Open portal GUI when player right-clicks a portal
+-- Intercept portal GUI opens
 ------------------------------------------------------------
 
 script.on_event(defines.events.on_gui_opened, function(event)
   if not event.entity then return end
   local entity = event.entity
-  if not PORTAL_DESTINATIONS[entity.name] then return end
+  if entity.name ~= PORTAL_NAME then return end
 
   local player = game.get_player(event.player_index)
 
-  -- Block interaction from map/satellite view — player must be physically present
   if player.controller_type ~= defines.controllers.character then
     player.opened = nil
     return
   end
 
-  player.opened = nil  -- dismiss native container GUI immediately
+  -- "Manage Modules" was clicked: let the native inventory open once, then clear the flag
+  if storage.player_managing_portal[player.index] then
+    storage.player_managing_portal[player.index] = nil
+    return
+  end
 
+  player.opened = nil
   open_portal_gui(player, entity)
 end)
 
 ------------------------------------------------------------
--- Handle travel / cancel button clicks
+-- GUI button handlers
 ------------------------------------------------------------
 
 script.on_event(defines.events.on_gui_click, function(event)
@@ -162,24 +180,32 @@ script.on_event(defines.events.on_gui_click, function(event)
     return
   end
 
-  if element.name ~= "portal_travel_button" then return end
+  if element.name == "portal_manage_button" then
+    local pdata = storage.player_portal[player.index]
+    if not pdata then return end
 
-  local data = storage.player_portal[player.index]
-  if not data then return end
+    local src_surface = game.surfaces[pdata.surface_name]
+    local portal = src_surface and src_surface.find_entity(PORTAL_NAME, pdata.position)
 
-  -- Must have empty hands to travel (GUI stays open so they can retry)
-  if player.cursor_stack and player.cursor_stack.valid_for_read then
-    player.create_local_flying_text{
-      text     = "Empty your hands before travelling!",
-      position = player.position,
-      color    = {r = 1, g = 0.3, b = 0.3},
-    }
+    close_portal_gui(player)  -- clears storage.player_portal before we use portal below
+
+    if portal and portal.valid then
+      storage.player_managing_portal[player.index] = true
+      player.opened = portal
+    end
     return
   end
 
-  -- Verify the portal entity is still there
-  local src_surface = game.surfaces[data.surface_name]
-  local portal = src_surface and src_surface.find_entity(data.portal_name, data.position)
+  -- Travel buttons are named "portal_travel_<surface>"
+  local prefix = "portal_travel_"
+  if element.name:sub(1, #prefix) ~= prefix then return end
+  local dest_planet = element.name:sub(#prefix + 1)
+
+  local pdata = storage.player_portal[player.index]
+  if not pdata then return end
+
+  local src_surface = game.surfaces[pdata.surface_name]
+  local portal = src_surface and src_surface.find_entity(PORTAL_NAME, pdata.position)
   if not portal or not portal.valid then
     player.create_local_flying_text{
       text     = "Portal is no longer available!",
@@ -190,9 +216,14 @@ script.on_event(defines.events.on_gui_click, function(event)
     return
   end
 
-  close_portal_gui(player)
-
-  local dest_planet = PORTAL_DESTINATIONS[data.portal_name]
+  if player.cursor_stack and player.cursor_stack.valid_for_read then
+    player.create_local_flying_text{
+      text     = "Empty your hands before travelling!",
+      position = player.position,
+      color    = {r = 1, g = 0.3, b = 0.3},
+    }
+    return
+  end
 
   if player.surface.name == dest_planet then
     player.create_local_flying_text{
@@ -202,6 +233,8 @@ script.on_event(defines.events.on_gui_click, function(event)
     }
     return
   end
+
+  close_portal_gui(player)
 
   local dest_surface
   if game.planets[dest_planet] then
@@ -228,23 +261,18 @@ script.on_event(defines.events.on_gui_click, function(event)
   end
 
   local safe_pos = dest_surface.find_non_colliding_position("character", tp_pos, 10, 0.5)
-  if safe_pos then
-    player.teleport(safe_pos, dest_surface)
-    player.create_local_flying_text{
-      text     = {"", "Welcome to ", dest_planet, "!"},
-      position = safe_pos,
-      color    = {r = 0.3, g = 1, b = 0.5},
-    }
-  else
-    player.teleport(tp_pos, dest_surface)
-  end
+  player.teleport(safe_pos or tp_pos, dest_surface)
+  player.create_local_flying_text{
+    text     = {"", "Welcome to ", dest_planet, "!"},
+    position = safe_pos or tp_pos,
+    color    = {r = 0.3, g = 1, b = 0.5},
+  }
 end)
 
 ------------------------------------------------------------
 -- Clean up GUI state
 ------------------------------------------------------------
 
--- Fires when player closes our frame via Escape or the X button
 script.on_event(defines.events.on_gui_closed, function(event)
   if event.element and event.element.valid
     and event.element.name == PORTAL_GUI
@@ -254,5 +282,6 @@ script.on_event(defines.events.on_gui_closed, function(event)
 end)
 
 script.on_event(defines.events.on_player_left_game, function(event)
-  storage.player_portal[event.player_index] = nil
+  storage.player_portal[event.player_index]          = nil
+  storage.player_managing_portal[event.player_index] = nil
 end)
