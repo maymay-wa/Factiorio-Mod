@@ -47,7 +47,7 @@ local planets = {
   {
     name = "fulgora",
     label = "Fulgora",
-    tint = {r = 0.95, g = 0.25, b = 0.7, a = 1.0},
+    tint = {r = 0.886, g = 0.439, b = 0.725, a = 1.0},
     ingredients = {
       {type = "item", name = "holmium-plate",    amount = 200},
       {type = "item", name = "superconductor",    amount = 100},
@@ -65,7 +65,7 @@ local planets = {
   {
     name = "gleba",
     label = "Gleba",
-    tint = {r = 0.6, g = 1.0, b = 0.0, a = 1.0},
+    tint = {r = 0.890, g = 0.871, b = 0.369, a = 1.0},
     ingredients = {
       {type = "item", name = "bioflux",       amount = 200},
       {type = "item", name = "carbon-fiber",   amount = 100},
@@ -83,7 +83,7 @@ local planets = {
   {
     name = "aquilo",
     label = "Aquilo",
-    tint = {r = 0.25, g = 0.85, b = 1.0, a = 1.0},
+    tint = {r = 0.204, g = 0.271, b = 0.737, a = 1.0},
     ingredients = {
       {type = "item",  name = "lithium-plate",       amount = 200},
       {type = "item",  name = "quantum-processor",    amount = 100},
