@@ -384,32 +384,32 @@ local function populate_list(list, portal)
     add_destination_card(list, dest, portal_module_count(portal, dest.module) > 0)
   end
 
-  list.add{type = "line"}
-
   -- Cargo module status (a modifier, so no travel button).
-  local cargo_on = portal_allows_cargo(portal)
-  local card = list.add{type = "frame", style = "deep_frame_in_shallow_frame", direction = "horizontal"}
-  card.style.padding = 8
-  card.style.minimal_width = 280
+  -- Only surfaces once the module is actually installed in the portal.
+  if portal_allows_cargo(portal) then
+    list.add{type = "line"}
 
-  local row = card.add{type = "flow", direction = "horizontal"}
-  row.style.vertical_align = "center"
-  row.style.horizontal_spacing = 12
-  row.style.horizontally_stretchable = true
+    local card = list.add{type = "frame", style = "deep_frame_in_shallow_frame", direction = "horizontal"}
+    card.style.padding = 8
+    card.style.minimal_width = 280
 
-  local icon = row.add{type = "sprite", sprite = "item/" .. CARGO_MODULE, resize_to_sprite = false}
-  icon.style.size = 32
+    local row = card.add{type = "flow", direction = "horizontal"}
+    row.style.vertical_align = "center"
+    row.style.horizontal_spacing = 12
+    row.style.horizontally_stretchable = true
 
-  local info = row.add{type = "flow", direction = "vertical"}
-  info.style.horizontally_stretchable = true
-  info.style.vertical_spacing = 2
-  info.add{type = "label", caption = "Cargo Module", style = "caption_label"}
-  info.add{
-    type    = "label",
-    caption = cargo_on
-      and (COLOR_READY .. "Inventory travels with you" .. COLOR_END)
-      or  (COLOR_MISSING .. "Inventory must be emptied to travel" .. COLOR_END),
-  }
+    local icon = row.add{type = "sprite", sprite = "item/" .. CARGO_MODULE, resize_to_sprite = false}
+    icon.style.size = 32
+
+    local info = row.add{type = "flow", direction = "vertical"}
+    info.style.horizontally_stretchable = true
+    info.style.vertical_spacing = 2
+    info.add{type = "label", caption = "Cargo Module", style = "caption_label"}
+    info.add{
+      type    = "label",
+      caption = COLOR_READY .. "Inventory travels with you" .. COLOR_END,
+    }
+  end
 end
 
 -- Dock the destination panel onto the portal's native inventory window.

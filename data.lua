@@ -5,7 +5,7 @@
 -- Configuration
 ------------------------------------------------------------
 
-local DEV_MODE = true
+local DEV_MODE = false
 
 local PORTAL_NAME = "interplanetary-portal"
 
@@ -275,7 +275,7 @@ end
 -- so you can only build it once you already own every other module.
 
 local CARGO_MODULE_NAME = "warp-module-cargo"
-local CARGO_TINT        = {r = 1.0, g = 0.843, b = 0.4, a = 1.0}
+local CARGO_TINT        = {r = 0.25, g = 0.25, b = 0.25, a = 1.0}
 
 local cargo_ingredients = {}
 local cargo_prereqs     = {PORTAL_NAME}
