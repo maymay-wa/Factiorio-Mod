@@ -15,6 +15,11 @@ local WARP_MODULES = {
   ["warp-module-aquilo"]   = {surface = "aquilo",    label = "Aquilo"},
 }
 
+-- When installed in a portal, lets travellers carry their inventory through
+-- instead of having to empty it first. Not a destination, so it's deliberately
+-- absent from WARP_MODULES.
+local CARGO_MODULE = "warp-module-cargo"
+
 local PORTAL_GUI = "portal_frame"
 
 ------------------------------------------------------------
@@ -252,6 +257,17 @@ local function get_installed_destinations(portal_entity)
   return dests
 end
 
+local function portal_allows_cargo(portal_entity)
+  local inv = portal_entity.get_inventory(defines.inventory.chest)
+  for i = 1, #inv do
+    local stack = inv[i]
+    if stack.valid_for_read and stack.name == CARGO_MODULE then
+      return true
+    end
+  end
+  return false
+end
+
 local function close_portal_gui(player)
   storage.player_portal[player.index] = nil
   local frame = player.gui.screen[PORTAL_GUI]
@@ -386,13 +402,24 @@ script.on_event(defines.events.on_gui_click, function(event)
     return
   end
 
-  if player.cursor_stack and player.cursor_stack.valid_for_read then
-    player.create_local_flying_text{
-      text     = "Empty your hands before travelling!",
-      position = player.position,
-      color    = {r = 1, g = 0.3, b = 0.3},
-    }
-    return
+  -- A cargo warp module in the portal lets the traveller bring everything with them.
+  if not portal_allows_cargo(portal) then
+    local main_inv = player.get_main_inventory()
+    local ammo_inv = player.get_inventory(defines.inventory.character_ammo)
+    local holding_items =
+      (player.cursor_stack and player.cursor_stack.valid_for_read)
+      or player.cursor_ghost
+      or (main_inv and not main_inv.is_empty())
+      or (ammo_inv and not ammo_inv.is_empty())
+
+    if holding_items then
+      player.create_local_flying_text{
+        text     = "Empty your inventory before travelling, or install a Cargo Warp Module!",
+        position = player.position,
+        color    = {r = 1, g = 0.3, b = 0.3},
+      }
+      return
+    end
   end
 
   if player.surface.name == dest_planet then

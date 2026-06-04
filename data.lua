@@ -157,7 +157,8 @@ end
 local cargo_pad_base = data.raw["cargo-landing-pad"]["cargo-landing-pad"]
 
 local portal_entity = make_dumb_pad(cargo_pad_base, PORTAL_NAME, nil)
-portal_entity.inventory_size = 4
+-- One slot per planet warp module, plus one for the cargo warp module.
+portal_entity.inventory_size = #planets + 1
 
 local portal_item = {
   type         = "item",
@@ -264,6 +265,76 @@ for _, planet in ipairs(planets) do
 
   data:extend({module_item, module_recipe, module_tech})
 end
+
+------------------------------------------------------------
+-- Cargo warp module — bring items through the portal
+------------------------------------------------------------
+-- A capstone module: installing it in a portal lets travellers carry their
+-- inventory through instead of having to empty it first. Crafting it consumes
+-- one of every planet warp module, and its technology requires all of theirs,
+-- so you can only build it once you already own every other module.
+
+local CARGO_MODULE_NAME = "warp-module-cargo"
+local CARGO_TINT        = {r = 1.0, g = 0.843, b = 0.4, a = 1.0}
+
+local cargo_ingredients = {}
+local cargo_prereqs     = {PORTAL_NAME}
+for _, planet in ipairs(planets) do
+  local module_name = "warp-module-" .. planet.name
+  table.insert(cargo_ingredients, {type = "item", name = module_name, amount = 1})
+  table.insert(cargo_prereqs, module_name)
+end
+
+local cargo_item = {
+  type       = "item",
+  name       = CARGO_MODULE_NAME,
+  icons      = {
+    {icon = "__interplanetary-portals__/Assets/disk_sprite.png", icon_size = 256, tint = CARGO_TINT},
+  },
+  subgroup   = "space-related",
+  order      = "z[warp-module]-zz-cargo",
+  stack_size = 1,
+}
+
+local cargo_recipe = {
+  type            = "recipe",
+  name            = CARGO_MODULE_NAME,
+  enabled         = false,
+  energy_required = DEV_MODE and 0.5 or 60,
+  -- Always requires one of every planet module — that is the point of it.
+  ingredients     = cargo_ingredients,
+  results         = {{type = "item", name = CARGO_MODULE_NAME, amount = 1}},
+}
+
+local cargo_tech = {
+  type          = "technology",
+  name          = CARGO_MODULE_NAME,
+  icons         = {
+    {icon = "__interplanetary-portals__/Assets/disk_sprite.png", icon_size = 256, tint = CARGO_TINT},
+  },
+  prerequisites = cargo_prereqs,
+  unit          = DEV_MODE and {
+    count       = 1,
+    ingredients = {{"automation-science-pack", 1}},
+    time        = 1,
+  } or {
+    count       = 1000,
+    ingredients = {
+      {"automation-science-pack",      1},
+      {"logistic-science-pack",        1},
+      {"chemical-science-pack",        1},
+      {"space-science-pack",           1},
+      {"metallurgic-science-pack",     1},
+      {"electromagnetic-science-pack", 1},
+      {"agricultural-science-pack",    1},
+      {"cryogenic-science-pack",       1},
+    },
+    time        = 60,
+  },
+  effects       = {{type = "unlock-recipe", recipe = CARGO_MODULE_NAME}},
+}
+
+data:extend({cargo_item, cargo_recipe, cargo_tech})
 
 ------------------------------------------------------------
 -- Portal animation (used by rendering.draw_animation in control.lua)
