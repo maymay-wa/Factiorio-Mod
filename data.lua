@@ -126,7 +126,7 @@ local function make_dumb_pad(base_pad, name, tint)
   ent.placeable_by   = {item = name, count = 1}
 
   ent.picture = {
-    filename = "__interplanetary-portals__/sprite.png",
+    filename = "__interplanetary-portals__/Assets/sprite.png",
     size     = 256,
     scale    = 0.75,
     tint     = tint,
@@ -162,7 +162,7 @@ portal_entity.inventory_size = 4
 local portal_item = {
   type         = "item",
   name         = PORTAL_NAME,
-  icon         = "__interplanetary-portals__/sprite.png",
+  icon         = "__interplanetary-portals__/Assets/sprite.png",
   icon_size    = 256,
   subgroup     = "space-related",
   order        = "z[portal]-a",
@@ -187,7 +187,7 @@ local portal_recipe = {
 local portal_tech = {
   type          = "technology",
   name          = PORTAL_NAME,
-  icon          = "__interplanetary-portals__/sprite.png",
+  icon          = "__interplanetary-portals__/Assets/sprite.png",
   icon_size     = 256,
   prerequisites = {"rocket-silo"},
   unit          = DEV_MODE and {
@@ -264,3 +264,19 @@ for _, planet in ipairs(planets) do
 
   data:extend({module_item, module_recipe, module_tech})
 end
+
+------------------------------------------------------------
+-- Portal animation (used by rendering.draw_animation in control.lua)
+------------------------------------------------------------
+
+data:extend({{
+  type            = "animation",
+  name            = "portal-animation",
+  filename        = "__interplanetary-portals__/Assets/final.png",
+  width           = 495,
+  height          = 485,
+  frame_count     = 36,
+  line_length     = 6,
+  animation_speed = 0.5 / 3,
+  scale           = 0.4,
+}})

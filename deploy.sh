@@ -20,7 +20,7 @@ rm -rf "$DEST"
 mkdir -p "$DEST"
 
 rsync -a --exclude='.git' --exclude='deploy.sh' --exclude='downloadportal.png' \
-  --exclude='.DS_Store' \
+  --exclude='.DS_Store' --exclude='Backup' --exclude='*.mp4' \
   "$SCRIPT_DIR/" "$DEST/"
 
 echo "Done. Mod installed at: $DEST"

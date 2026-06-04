@@ -24,10 +24,57 @@ local PORTAL_GUI = "portal_frame"
 local function init_storage()
   storage.player_portal          = storage.player_portal or {}
   storage.player_managing_portal = storage.player_managing_portal or {}
+  storage.portal_renders         = storage.portal_renders or {}
+  storage.teleporting            = storage.teleporting or {}
+end
+
+local function create_portal_animation(entity)
+  local render_obj = rendering.draw_animation{
+    animation    = "portal-animation",
+    surface      = entity.surface,
+    target       = entity,
+    render_layer = "higher-object-above",
+  }
+  storage.portal_renders[entity.unit_number] = render_obj
+end
+
+local function restore_portal_animations()
+  for _, surface in pairs(game.surfaces) do
+    for _, entity in pairs(surface.find_entities_filtered{name = PORTAL_NAME}) do
+      local existing = storage.portal_renders[entity.unit_number]
+      if not existing or not existing.valid then
+        create_portal_animation(entity)
+      end
+    end
+  end
 end
 
 script.on_init(init_storage)
-script.on_configuration_changed(init_storage)
+script.on_configuration_changed(function()
+  init_storage()
+  restore_portal_animations()
+end)
+
+------------------------------------------------------------
+-- Portal animation cleanup
+------------------------------------------------------------
+
+local function cleanup_portal_render(event)
+  local unit_number = event.entity and event.entity.unit_number
+  if not unit_number then return end
+  local render_obj = storage.portal_renders[unit_number]
+  if render_obj and render_obj.valid then
+    render_obj.destroy()
+  end
+  storage.portal_renders[unit_number] = nil
+end
+
+script.on_event(defines.events.on_player_mined_entity, cleanup_portal_render,
+  {{filter = "name", name = PORTAL_NAME}})
+script.on_event(defines.events.on_robot_mined_entity, cleanup_portal_render,
+  {{filter = "name", name = PORTAL_NAME}})
+script.on_event(defines.events.on_entity_died, cleanup_portal_render,
+  {{filter = "name", name = PORTAL_NAME}})
 
 ------------------------------------------------------------
 -- Build limit: one portal per surface
@@ -38,7 +85,10 @@ local function enforce_build_limit(event)
   if not entity or not entity.valid or entity.name ~= PORTAL_NAME then return end
 
   local surface = entity.surface
-  if surface.count_entities_filtered{name = PORTAL_NAME} <= 1 then return end
+  if surface.count_entities_filtered{name = PORTAL_NAME} <= 1 then
+    create_portal_animation(entity)
+    return
+  end
 
   local pos = entity.position
   entity.destroy()
