@@ -157,11 +157,15 @@ local function drive_teleports()
       tp.t = tp.t + 1
 
       if tp.t <= TP_FADE_IN then
-        local f = tp.t / TP_FADE_IN
-        set_overlay_alpha(tp.renders, TP_DARK_MAX * f, f)
+        -- Dark vignette ramps steadily to black; the swirl rises then falls
+        -- so it has fully vanished by the time the screen is black.
+        local f      = tp.t / TP_FADE_IN
+        local half   = TP_FADE_IN / 2
+        local swirl_a = (tp.t <= half) and (tp.t / half) or (1 - (tp.t - half) / half)
+        set_overlay_alpha(tp.renders, TP_DARK_MAX * f, swirl_a)
 
       elseif tp.t < TP_TELEPORT then
-        set_overlay_alpha(tp.renders, TP_DARK_MAX, 1)
+        set_overlay_alpha(tp.renders, TP_DARK_MAX, 0)
 
       elseif tp.t == TP_TELEPORT then
         destroy_overlay(tp.renders)
@@ -170,12 +174,12 @@ local function drive_teleports()
           player.teleport(tp.dest_pos, dest_surface)
         end
         tp.renders = draw_teleport_overlay(player, TP_DARK_MAX)
-        set_overlay_alpha(tp.renders, TP_DARK_MAX, 1)
+        set_overlay_alpha(tp.renders, TP_DARK_MAX, 0)
 
       else
         local f = (tp.t - TP_TELEPORT) / (TP_TOTAL - TP_TELEPORT)
         local a = 1 - f
-        set_overlay_alpha(tp.renders, TP_DARK_MAX * a, a)
+        set_overlay_alpha(tp.renders, TP_DARK_MAX * a, 0)
         if tp.t >= TP_TOTAL then
           destroy_overlay(tp.renders)
           storage.teleporting[player_index] = nil

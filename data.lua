@@ -225,7 +225,7 @@ for _, planet in ipairs(planets) do
     type      = "item",
     name      = module_name,
     icons     = {
-      {icon = "__base__/graphics/icons/plastic-bar.png", icon_size = 64, tint = planet.tint},
+      {icon = "__interplanetary-portals__/Assets/disk_sprite.png", icon_size = 256, tint = planet.tint},
     },
     subgroup  = "space-related",
     order     = "z[warp-module]-" .. planet.name,
@@ -247,7 +247,7 @@ for _, planet in ipairs(planets) do
     type          = "technology",
     name          = module_name,
     icons         = {
-      {icon = "__base__/graphics/icons/plastic-bar.png", icon_size = 64, tint = planet.tint},
+      {icon = "__interplanetary-portals__/Assets/disk_sprite.png", icon_size = 256, tint = planet.tint},
     },
     prerequisites = tech_prereqs,
     unit          = DEV_MODE and {
