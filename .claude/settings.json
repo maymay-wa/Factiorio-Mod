@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(brew install *)",
-      "Bash(command -v luac lua)"
+      "Bash(command -v luac lua)",
+      "Bash(luac -p control.lua)"
     ]
   }
 }
