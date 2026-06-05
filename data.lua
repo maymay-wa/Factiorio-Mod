@@ -138,6 +138,17 @@ local function make_dumb_pad(base_pad, name, tint)
   ent.minable        = {mining_time = 2, result = name}
   ent.placeable_by   = {item = name, count = 1}
 
+  -- The cargo-landing-pad base carries "no-automated-item-insertion", which blocks
+  -- inserters from loading the entity. Drop it so warp fuel/resources can be
+  -- inserted by automation (it survives the type change to a plain container).
+  if ent.flags then
+    local kept = {}
+    for _, flag in ipairs(ent.flags) do
+      if flag ~= "no-automated-item-insertion" then kept[#kept + 1] = flag end
+    end
+    ent.flags = kept
+  end
+
   ent.picture = {
     filename = "__interplanetary-portals__/Assets/sprite.png",
     size     = 256,

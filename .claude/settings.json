@@ -5,7 +5,9 @@
       "Bash(command -v luac lua)",
       "Bash(luac -p control.lua)",
       "WebSearch",
-      "Bash(luac -p data.lua)"
+      "Bash(luac -p data.lua)",
+      "Bash(cd \"/Users/mayerunterberg/Library/Application Support/Steam/steamapps/common/Factorio/factorio.app/Contents/data\" && grep -rl \"cargo-landing-pad\" space-age/prototypes/ | head; echo \"---\"; grep -rn '\"cargo-landing-pad\"\\\\|name = \"cargo-landing-pad\"\\\\|collision_box\\\\|selection_box' space-age/prototypes/entity/cargo-landing-pad.lua 2>/dev/null | head -40)",
+      "Read(//Users/mayerunterberg/Library/Application Support/Steam/steamapps/common/Factorio/factorio.app/Contents/data/**)"
     ]
   }
 }
