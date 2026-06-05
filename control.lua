@@ -21,14 +21,28 @@ local DESTINATIONS = {
 -- absent from DESTINATIONS.
 local CARGO_MODULE = "warp-module-cargo"
 
--- When installed in a portal, warping no longer consumes the rocket-fuel fee.
+-- When installed in a portal, warping no longer consumes the per-trip resource cost.
 local FREE_TRAVEL_MODULE = "warp-module-free-travel"
 
--- Each trip costs WARP_FUEL_BASE rocket fuel (scaled by the travel-cost setting),
--- consumed from the portal's own inventory. Stock the portal with fuel, or install
--- a Free Travel Module to skip the fee entirely.
-local WARP_FUEL_ITEM = "rocket-fuel"
-local WARP_FUEL_BASE = 10
+-- Resources consumed from the portal's own inventory on every teleport (scaled by
+-- the travel-cost-multiplier setting). A Free Travel Module waives the whole cost.
+-- `slots` is how many dedicated, filtered inventory slots to reserve for each.
+local WARP_COST = {
+  {name = "processing-unit",       amount = 50, slots = 1},
+  {name = "low-density-structure", amount = 50, slots = 2},
+  {name = "rocket-fuel",           amount = 50, slots = 5},
+}
+
+-- Friendly names for the "insufficient resources" warning.
+local WARP_COST_LABEL = {
+  ["processing-unit"]       = "processing units",
+  ["low-density-structure"] = "low density structures",
+  ["rocket-fuel"]           = "rocket fuel",
+}
+
+-- Whether the cargo module exists this game (mirrors the data-stage setting), so
+-- the slot layout lines up with the portal's actual inventory size.
+local CARGO_ENABLED = settings.startup["portal-enable-cargo-module"].value
 
 local COLOR_READY    = "[color=#5fd35f]"
 local COLOR_MISSING  = "[color=#9e9e9e]"
@@ -75,6 +89,45 @@ local function show_warning(player, text, color)
   storage.warnings[player.index] = game.tick + WARNING_DURATION
 end
 
+-- Ordered list of items each filtered slot should accept. Anything past the end
+-- of this list (the remaining slots) is reserved for warp fuel.
+local function portal_filter_layout()
+  local layout = {}
+  for _, dest in ipairs(DESTINATIONS) do
+    layout[#layout + 1] = dest.module
+  end
+  if CARGO_ENABLED then layout[#layout + 1] = CARGO_MODULE end
+  layout[#layout + 1] = FREE_TRAVEL_MODULE
+  for _, c in ipairs(WARP_COST) do
+    for _ = 1, c.slots do layout[#layout + 1] = c.name end
+  end
+  return layout
+end
+
+-- Give each module and the rocket fuel its own dedicated slot. Snapshot/clear/
+-- re-insert so contents settle into their filtered slots even on existing portals.
+local function apply_portal_filters(portal)
+  local inv = portal.get_inventory(defines.inventory.chest)
+  if not inv or not inv.supports_filters() then return end
+
+  local layout   = portal_filter_layout()
+  local contents = inv.get_contents()
+  inv.clear()
+  for i = 1, #inv do
+    inv.set_filter(i, layout[i])
+  end
+  for _, stack in pairs(contents) do
+    local inserted = inv.insert{name = stack.name, count = stack.count, quality = stack.quality}
+    if inserted < stack.count then
+      portal.surface.spill_item_stack{
+        position      = portal.position,
+        stack         = {name = stack.name, count = stack.count - inserted, quality = stack.quality},
+        enable_looted = true,
+      }
+    end
+  end
+end
+
 local function create_portal_animation(entity)
   local render_obj = rendering.draw_animation{
     animation    = "portal-animation",
@@ -92,6 +145,7 @@ local function restore_portal_animations()
       if not existing or not existing.valid then
         create_portal_animation(entity)
       end
+      apply_portal_filters(entity)
     end
   end
 end
@@ -287,6 +341,7 @@ local function enforce_build_limit(event)
   local surface = entity.surface
   if surface.count_entities_filtered{name = PORTAL_NAME} <= 1 then
     create_portal_animation(entity)
+    apply_portal_filters(entity)
     return
   end
 
@@ -302,7 +357,11 @@ local function enforce_build_limit(event)
       color    = {r = 1, g = 0.3, b = 0.3},
     }
   else
-    surface.spill_item_stack(pos, {name = PORTAL_NAME, count = 1}, true)
+    surface.spill_item_stack{
+      position      = pos,
+      stack         = {name = PORTAL_NAME, count = 1},
+      enable_looted = true,
+    }
   end
 end
 
@@ -328,9 +387,38 @@ local function portal_allows_free_travel(portal_entity)
   return portal_module_count(portal_entity, FREE_TRAVEL_MODULE) > 0
 end
 
--- Rocket fuel consumed per trip, after the travel-cost-multiplier setting.
-local function warp_fee()
-  return math.max(0, math.floor(WARP_FUEL_BASE * settings.global["portal-travel-cost-multiplier"].value))
+-- A cost amount after the travel-cost-multiplier setting (0 disables travel cost).
+local function cost_amount(base)
+  return math.max(0, math.floor(base * settings.global["portal-travel-cost-multiplier"].value))
+end
+
+-- Does the portal hold a full trip's worth of every cost resource?
+local function portal_can_afford(portal)
+  local inv = portal.get_inventory(defines.inventory.chest)
+  if not inv then return false end
+  for _, c in ipairs(WARP_COST) do
+    if inv.get_item_count(c.name) < cost_amount(c.amount) then return false end
+  end
+  return true
+end
+
+-- Consume one trip's worth of every cost resource from the portal.
+local function charge_warp(portal)
+  local inv = portal.get_inventory(defines.inventory.chest)
+  if not inv then return end
+  for _, c in ipairs(WARP_COST) do
+    local amt = cost_amount(c.amount)
+    if amt > 0 then inv.remove{name = c.name, count = amt} end
+  end
+end
+
+-- Human-readable list of the per-trip cost, e.g. "50 processing units, ...".
+local function warp_cost_text()
+  local parts = {}
+  for _, c in ipairs(WARP_COST) do
+    parts[#parts + 1] = cost_amount(c.amount) .. " " .. (WARP_COST_LABEL[c.name] or c.name)
+  end
+  return table.concat(parts, ", ")
 end
 
 -- Resolve the portal entity the player currently has open from stored coords.
@@ -351,30 +439,56 @@ local function close_portal_gui(player)
   end
 end
 
--- One row: planet icon + name/status + travel button (grey until module installed).
-local function add_destination_card(parent, dest, installed)
+-- A titled divider bar that opens a new section of the panel.
+local function add_section_header(parent, title)
+  local bar = parent.add{type = "frame", style = "subheader_frame", direction = "horizontal"}
+  bar.style.horizontally_stretchable = true
+  bar.add{type = "label", caption = title, style = "subheader_caption_label"}
+end
+
+-- The padded body that holds a section's cards/rows.
+local function add_section_body(parent)
+  local body = parent.add{type = "flow", direction = "vertical"}
+  body.style.padding = 8
+  body.style.vertical_spacing = 6
+  body.style.horizontally_stretchable = true
+  return body
+end
+
+-- A boxed card: icon on the left, a title + status line in the middle.
+-- Returns the card and its row so callers can append controls (e.g. a button).
+local function add_card(parent, sprite, title, status)
   local card = parent.add{type = "frame", style = "deep_frame_in_shallow_frame", direction = "horizontal"}
   card.style.padding = 8
-  card.style.minimal_width = 280
+  card.style.horizontally_stretchable = true
 
   local row = card.add{type = "flow", direction = "horizontal"}
   row.style.vertical_align = "center"
   row.style.horizontal_spacing = 12
   row.style.horizontally_stretchable = true
 
-  local icon = row.add{type = "sprite", sprite = "item/" .. dest.module, resize_to_sprite = false}
+  local icon = row.add{type = "sprite", sprite = sprite, resize_to_sprite = false}
   icon.style.size = 32
 
   local info = row.add{type = "flow", direction = "vertical"}
   info.style.horizontally_stretchable = true
   info.style.vertical_spacing = 2
-  info.add{type = "label", caption = dest.label, style = "caption_label"}
-  info.add{
-    type    = "label",
-    caption = installed
+  info.add{type = "label", caption = title, style = "caption_label"}
+  info.add{type = "label", caption = status}
+
+  return card, row
+end
+
+-- One destination: planet card + travel button (grey until its module is installed).
+local function add_destination_card(parent, dest, installed)
+  local _, row = add_card(
+    parent,
+    "item/" .. dest.module,
+    dest.label,
+    installed
       and (COLOR_READY .. "Ready" .. COLOR_END)
-      or  (COLOR_MISSING .. "Module required" .. COLOR_END),
-  }
+      or  (COLOR_MISSING .. "Module required" .. COLOR_END)
+  )
 
   local btn = row.add{
     type    = "button",
@@ -388,80 +502,72 @@ local function add_destination_card(parent, dest, installed)
   btn.style.minimal_width = 90
 end
 
--- (Re)fill the destination panel from current portal contents.
-local function populate_list(list, portal)
-  list.clear()
+-- One warp-resource row: icon + name on the left, have / need on the right.
+local function add_resource_row(parent, item, have, need)
+  local enough = have >= need
 
-  list.add{
+  local frame = parent.add{type = "frame", style = "deep_frame_in_shallow_frame", direction = "horizontal"}
+  frame.style.padding = 6
+  frame.style.horizontally_stretchable = true
+
+  local row = frame.add{type = "flow", direction = "horizontal"}
+  row.style.vertical_align = "center"
+  row.style.horizontal_spacing = 8
+  row.style.horizontally_stretchable = true
+
+  local icon = row.add{type = "sprite", sprite = "item/" .. item}
+  icon.style.size = 24
+
+  local name = row.add{type = "label", caption = WARP_COST_LABEL[item] or item}
+  name.style.horizontally_stretchable = true
+
+  row.add{
     type    = "label",
-    caption = "Drop warp modules into the portal, then pick a destination.",
-    style   = "label",
+    caption = (enough and COLOR_READY or COLOR_MISSING) .. have .. " / " .. need .. COLOR_END,
+    style   = "caption_label",
   }
+end
 
+-- (Re)fill the panel from current portal contents, grouped into sections.
+local function populate_list(content, portal)
+  content.clear()
+
+  -- Section: travel destinations.
+  add_section_header(content, "Destinations")
+  local dests = add_section_body(content)
+  dests.add{type = "label", caption = "Load a warp module, then pick where to go.", style = "label"}
   for _, dest in ipairs(DESTINATIONS) do
-    add_destination_card(list, dest, portal_module_count(portal, dest.module) > 0)
+    add_destination_card(dests, dest, portal_module_count(portal, dest.module) > 0)
   end
 
-  -- Cargo module status (a modifier, so no travel button).
-  -- Only surfaces once the module is actually installed in the portal.
-  if portal_allows_cargo(portal) then
-    list.add{type = "line"}
-
-    local card = list.add{type = "frame", style = "deep_frame_in_shallow_frame", direction = "horizontal"}
-    card.style.padding = 8
-    card.style.minimal_width = 280
-
-    local row = card.add{type = "flow", direction = "horizontal"}
-    row.style.vertical_align = "center"
-    row.style.horizontal_spacing = 12
-    row.style.horizontally_stretchable = true
-
-    local icon = row.add{type = "sprite", sprite = "item/" .. CARGO_MODULE, resize_to_sprite = false}
-    icon.style.size = 32
-
-    local info = row.add{type = "flow", direction = "vertical"}
-    info.style.horizontally_stretchable = true
-    info.style.vertical_spacing = 2
-    info.add{type = "label", caption = "Cargo Module", style = "caption_label"}
-    info.add{
-      type    = "label",
-      caption = COLOR_READY .. "Inventory travels with you" .. COLOR_END,
-    }
+  -- Section: modifier modules (cargo, free travel) — shown with their install state
+  -- so players know what's available even before slotting one in.
+  add_section_header(content, "Modules")
+  local mods = add_section_body(content)
+  if CARGO_ENABLED then
+    local cargo_on = portal_allows_cargo(portal)
+    add_card(mods, "item/" .. CARGO_MODULE, "Cargo Module",
+      cargo_on
+        and (COLOR_READY   .. "Inventory travels with you" .. COLOR_END)
+        or  (COLOR_MISSING .. "Empty your inventory before travelling" .. COLOR_END))
   end
+  local free_on = portal_allows_free_travel(portal)
+  add_card(mods, "item/" .. FREE_TRAVEL_MODULE, "Free Travel Module",
+    free_on
+      and (COLOR_READY   .. "Warps cost no resources" .. COLOR_END)
+      or  (COLOR_MISSING .. "Not installed" .. COLOR_END))
 
-  -- Warp fuel status: a Free Travel Module waives the fee; otherwise show whether
-  -- the portal holds enough rocket fuel for the next trip.
-  list.add{type = "line"}
-  if portal_allows_free_travel(portal) then
-    local card = list.add{type = "frame", style = "deep_frame_in_shallow_frame", direction = "horizontal"}
-    card.style.padding = 8
-    card.style.minimal_width = 280
-
-    local row = card.add{type = "flow", direction = "horizontal"}
-    row.style.vertical_align = "center"
-    row.style.horizontal_spacing = 12
-    row.style.horizontally_stretchable = true
-
-    local icon = row.add{type = "sprite", sprite = "item/" .. FREE_TRAVEL_MODULE, resize_to_sprite = false}
-    icon.style.size = 32
-
-    local info = row.add{type = "flow", direction = "vertical"}
-    info.style.horizontally_stretchable = true
-    info.style.vertical_spacing = 2
-    info.add{type = "label", caption = "Free Travel Module", style = "caption_label"}
-    info.add{type = "label", caption = COLOR_READY .. "Warps cost no fuel" .. COLOR_END}
+  -- Section: per-trip resource cost.
+  add_section_header(content, "Warp Resources")
+  local res = add_section_body(content)
+  if free_on then
+    res.add{type = "label", caption = COLOR_READY .. "Free Travel Module installed — warps are free." .. COLOR_END}
+  elseif settings.global["portal-travel-cost-multiplier"].value <= 0 then
+    res.add{type = "label", caption = COLOR_READY .. "Travel cost disabled — warps are free." .. COLOR_END}
   else
-    local fee  = warp_fee()
-    local have = portal_module_count(portal, WARP_FUEL_ITEM)
-    if fee <= 0 then
-      list.add{type = "label", caption = COLOR_READY .. "Travel is free (fuel cost disabled)" .. COLOR_END}
-    else
-      local enough = have >= fee
-      list.add{
-        type    = "label",
-        caption = (enough and COLOR_READY or COLOR_MISSING)
-          .. "Warp fuel: " .. have .. "/" .. fee .. " rocket fuel" .. COLOR_END,
-      }
+    res.add{type = "label", caption = "Consumed from the portal each trip:", style = "label"}
+    for _, c in ipairs(WARP_COST) do
+      add_resource_row(res, c.name, portal_module_count(portal, c.name), cost_amount(c.amount))
     end
   end
 end
@@ -493,9 +599,13 @@ local function open_portal_gui(player, entity)
     style     = "inside_shallow_frame",
     direction = "vertical",
   }
+  content.style.minimal_width = 340
+
+  -- Sections (subheader bars + bodies) are added straight into this flow so each
+  -- divider spans the full panel width.
   local list = content.add{type = "flow", name = "portal_list", direction = "vertical"}
-  list.style.padding = 12
-  list.style.vertical_spacing = 8
+  list.style.horizontally_stretchable = true
+  list.style.vertical_spacing = 0
 
   populate_list(list, entity)
 end
@@ -510,8 +620,10 @@ local function portal_signature(portal)
   end
   parts[#parts + 1] = portal_allows_cargo(portal) and "1" or "0"
   parts[#parts + 1] = portal_allows_free_travel(portal) and "1" or "0"
-  -- Include the live fuel count so the "Warp fuel: x/y" label stays accurate.
-  parts[#parts + 1] = "f" .. portal_module_count(portal, WARP_FUEL_ITEM)
+  -- Live cost-resource counts so the per-trip cost readout stays accurate.
+  for _, c in ipairs(WARP_COST) do
+    parts[#parts + 1] = c.name .. portal_module_count(portal, c.name)
+  end
   return table.concat(parts, ",")
 end
 
@@ -606,16 +718,12 @@ script.on_event(defines.events.on_gui_click, function(event)
   -- Per-trip warp fee, paid from the portal's own inventory (travellers without a
   -- cargo module arrive empty-handed, so the player can't be charged directly).
   if not portal_allows_free_travel(portal) then
-    local fee = warp_fee()
-    if fee > 0 then
-      local inv = portal.get_inventory(defines.inventory.chest)
-      if not inv or inv.get_item_count(WARP_FUEL_ITEM) < fee then
-        show_warning(player, "Portal needs " .. fee ..
-          " rocket fuel to warp. Add fuel to the portal or install a Free Travel Module.")
-        return
-      end
-      inv.remove{name = WARP_FUEL_ITEM, count = fee}
+    if not portal_can_afford(portal) then
+      show_warning(player, "Portal needs " .. warp_cost_text() ..
+        " per warp. Stock the portal or install a Free Travel Module.")
+      return
     end
+    charge_warp(portal)
   end
 
   close_portal_gui(player)

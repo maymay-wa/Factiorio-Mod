@@ -2,9 +2,9 @@
 Version: 1.4.0
 Date: 2026-06-05
   Features:
-    - Warping now costs rocket fuel per trip, consumed from the portal's own inventory.
-    - Added the Free Travel Module: install it in a portal to warp without spending fuel.
+    - Warping now costs 50 processing units, 50 low density structures, and 50 rocket fuel per trip, consumed from the portal's own inventory.
+    - Added the Free Travel Module: install it in a portal to warp without spending resources.
     - Added mod settings: recipe cost multiplier, travel cost multiplier, and a toggle for the Cargo Warp Module.
   Changes:
-    - The portal inventory now has spare slots for stocking warp fuel.
-    - The portal GUI shows warp fuel status and free-travel state.
+    - Each warp module and warp resource now has its own dedicated, filtered slot in the portal.
+    - The portal GUI shows the per-trip warp cost and free-travel state.
