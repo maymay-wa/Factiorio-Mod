@@ -3,7 +3,9 @@
     "allow": [
       "Bash(brew install *)",
       "Bash(command -v luac lua)",
-      "Bash(luac -p control.lua)"
+      "Bash(luac -p control.lua)",
+      "WebSearch",
+      "Bash(luac -p data.lua)"
     ]
   }
 }

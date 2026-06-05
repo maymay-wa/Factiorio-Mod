@@ -170,14 +170,14 @@ end
 local cargo_pad_base = data.raw["cargo-landing-pad"]["cargo-landing-pad"]
 
 local portal_entity = make_dumb_pad(cargo_pad_base, PORTAL_NAME, nil)
--- One slot per planet warp module, the optional cargo module, the free-travel
--- module, plus two spare slots to stock rocket fuel for the per-trip warp fee.
+-- The portal's warp modules and per-trip resources live in its own filtered native
+-- inventory, shown as standard item slots in the entity window (like a rocket silo).
 -- Planet modules + optional cargo + free-travel module + 8 dedicated slots for the
 -- per-trip warp resources (1 processing unit, 2 LDS, 5 rocket fuel — see WARP_COST
 -- in control.lua, which must stay in sync with this count).
 portal_entity.inventory_size = #planets + (CARGO_ENABLED and 1 or 0) + 1 + 8
 -- Per-slot filters (applied in control.lua) give each warp module and warp resource
--- its own dedicated, labelled slot instead of a flat undifferentiated grid.
+-- its own dedicated slot instead of a flat, undifferentiated grid.
 portal_entity.inventory_type = "with_filters_and_bar"
 
 local portal_item = {

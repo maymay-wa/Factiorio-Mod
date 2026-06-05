@@ -48,8 +48,8 @@ local COLOR_READY    = "[color=#5fd35f]"
 local COLOR_MISSING  = "[color=#9e9e9e]"
 local COLOR_END      = "[/color]"
 
--- Custom window that replaces the portal's native inventory grid. It owns its own
--- slot buttons so modules and resources can be grouped into tidy sections.
+-- Tabbed panel docked onto the portal window, grouping modules and resources into
+-- tidy sections. The items themselves live in a hidden per-portal script inventory.
 local PORTAL_GUI = "portal_travel_gui"
 
 ------------------------------------------------------------
@@ -90,13 +90,12 @@ local function show_warning(player, text, color)
   storage.warnings[player.index] = game.tick + WARNING_DURATION
 end
 
--- Ordered list of items each filtered slot should accept. Anything past the end
--- of this list (the remaining slots) is reserved for warp fuel.
+-- Ordered list of items each filtered inventory slot should accept: planet modules,
+-- the optional cargo module, the free-travel module, then dedicated slots per warp
+-- resource. The slot index of each item lines up with portal_entity.inventory_size.
 local function portal_filter_layout()
   local layout = {}
-  for _, dest in ipairs(DESTINATIONS) do
-    layout[#layout + 1] = dest.module
-  end
+  for _, dest in ipairs(DESTINATIONS) do layout[#layout + 1] = dest.module end
   if CARGO_ENABLED then layout[#layout + 1] = CARGO_MODULE end
   layout[#layout + 1] = FREE_TRAVEL_MODULE
   for _, c in ipairs(WARP_COST) do
@@ -105,7 +104,7 @@ local function portal_filter_layout()
   return layout
 end
 
--- Give each module and the rocket fuel its own dedicated slot. Snapshot/clear/
+-- Give each module and warp resource its own dedicated, filtered slot. Snapshot/clear/
 -- re-insert so contents settle into their filtered slots even on existing portals.
 local function apply_portal_filters(portal)
   local inv = portal.get_inventory(defines.inventory.chest)
@@ -162,7 +161,8 @@ end)
 ------------------------------------------------------------
 
 local function cleanup_portal_render(event)
-  local unit_number = event.entity and event.entity.unit_number
+  local entity = event.entity
+  local unit_number = entity and entity.unit_number
   if not unit_number then return end
   local render_obj = storage.portal_renders[unit_number]
   if render_obj and render_obj.valid then
@@ -434,102 +434,38 @@ end
 
 local function close_portal_gui(player)
   storage.player_portal[player.index] = nil
-  local panel = player.gui.screen[PORTAL_GUI]
+  local panel = player.gui.relative[PORTAL_GUI]
   if panel and panel.valid then
     panel.destroy()
   end
 end
 
--- Map each section's items to the dedicated chest inventory slot they live in.
--- Mirrors portal_filter_layout() exactly so a slot button's index matches its filter.
-local function build_slot_map()
-  local map = {dest = {}, cargo = nil, free = nil, res = {}}
-  local i = 0
-  for _, dest in ipairs(DESTINATIONS) do
-    i = i + 1
-    map.dest[dest.surface] = i
-  end
-  if CARGO_ENABLED then i = i + 1; map.cargo = i end
-  i = i + 1; map.free = i
-  for _, c in ipairs(WARP_COST) do
-    map.res[c.name] = {}
-    for _ = 1, c.slots do
-      i = i + 1
-      map.res[c.name][#map.res[c.name] + 1] = i
-    end
-  end
-  return map
-end
-
--- A titled divider bar that opens a new section of the panel.
-local function add_section_header(parent, title)
-  local bar = parent.add{type = "frame", style = "subheader_frame", direction = "horizontal"}
-  bar.style.horizontally_stretchable = true
-  bar.add{type = "label", caption = title, style = "subheader_caption_label"}
-end
-
--- The padded body that holds a section's cards/slots.
-local function add_section_body(parent)
-  local body = parent.add{type = "flow", direction = "vertical"}
-  body.style.padding = 8
-  body.style.vertical_spacing = 6
-  body.style.horizontally_stretchable = true
-  return body
-end
-
--- A single interactive inventory slot bound to chest slot `index`. Click to swap
--- with the cursor; shift-click to quick-move to/from the player's inventory.
--- Shows the held item when filled, or a hint tooltip for `item` when empty.
-local function add_slot(parent, portal, index, item)
-  local inv    = portal.get_inventory(defines.inventory.chest)
-  local stack  = inv and inv[index]
-  local filled = stack and stack.valid_for_read
-
-  parent.add{
-    type    = "sprite-button",
-    name    = "portal_slot_" .. index,
-    style   = "slot_button",
-    sprite  = filled and ("item/" .. stack.name) or nil,
-    number  = (filled and stack.count > 1) and stack.count or nil,
-    tooltip = filled
-      and (stack.count .. " × [item=" .. stack.name .. "]\n[font=default-small]Click to take · Shift-click to your inventory[/font]")
-      or  ("Insert [item=" .. item .. "]\n[font=default-small]Click with the item on your cursor · Shift-click to pull from your inventory[/font]"),
-  }
-end
-
--- A slot with a caption underneath (used for the module slots).
-local function add_labeled_slot(parent, portal, index, item, label)
-  local col = parent.add{type = "flow", direction = "vertical"}
-  col.style.horizontal_align = "center"
-  col.style.vertical_spacing = 2
-  add_slot(col, portal, index, item)
-  col.add{type = "label", caption = label, style = "label"}
-end
-
--- One destination: module slot + planet name/status + travel button.
-local function add_destination_card(parent, portal, dest, index)
+-- One destination row: planet icon + name/status + travel button (greyed until the
+-- matching warp module is in the portal's inventory).
+local function add_destination_row(parent, portal, dest)
   local installed = portal_module_count(portal, dest.module) > 0
 
-  local card = parent.add{type = "frame", style = "deep_frame_in_shallow_frame", direction = "horizontal"}
-  card.style.padding = 8
-  card.style.horizontally_stretchable = true
+  local frame = parent.add{type = "frame", style = "deep_frame_in_shallow_frame", direction = "horizontal"}
+  frame.style.padding = 6
+  frame.style.horizontally_stretchable = true
 
-  local row = card.add{type = "flow", direction = "horizontal"}
+  local row = frame.add{type = "flow", direction = "horizontal"}
   row.style.vertical_align = "center"
-  row.style.horizontal_spacing = 12
+  row.style.horizontal_spacing = 8
   row.style.horizontally_stretchable = true
 
-  add_slot(row, portal, index, dest.module)
+  local icon = row.add{type = "sprite", sprite = "item/" .. dest.module}
+  icon.style.size = 24
 
   local info = row.add{type = "flow", direction = "vertical"}
   info.style.horizontally_stretchable = true
-  info.style.vertical_spacing = 2
+  info.style.vertical_spacing = 0
   info.add{type = "label", caption = dest.label, style = "caption_label"}
   info.add{
     type    = "label",
     caption = installed
       and (COLOR_READY .. "Ready" .. COLOR_END)
-      or  (COLOR_MISSING .. "Insert warp module" .. COLOR_END),
+      or  (COLOR_MISSING .. "Module required" .. COLOR_END),
   }
 
   local btn = row.add{
@@ -539,89 +475,53 @@ local function add_destination_card(parent, portal, dest, index)
     style   = installed and "confirm_button" or "button",
     enabled = installed,
     tooltip = installed and ("Travel to " .. dest.label)
-      or "Insert the warp module to enable travel",
+      or "Load the warp module into the portal to enable travel",
   }
-  btn.style.minimal_width = 90
+  btn.style.minimal_width = 80
 end
 
--- One resource: header (icon + name + have/need) over its row of fill slots.
-local function add_resource_group(parent, portal, cost, indices)
-  local need   = cost_amount(cost.amount)
-  local have   = portal_module_count(portal, cost.name)
-  local enough = have >= need
-
-  local frame = parent.add{type = "frame", style = "deep_frame_in_shallow_frame", direction = "vertical"}
-  frame.style.padding = 6
-  frame.style.horizontally_stretchable = true
-
-  local head = frame.add{type = "flow", direction = "horizontal"}
-  head.style.vertical_align = "center"
-  head.style.horizontal_spacing = 8
-  head.style.horizontally_stretchable = true
-
-  local icon = head.add{type = "sprite", sprite = "item/" .. cost.name}
-  icon.style.size = 20
-  local name = head.add{type = "label", caption = WARP_COST_LABEL[cost.name] or cost.name}
-  name.style.horizontally_stretchable = true
-  head.add{
-    type    = "label",
-    style   = "caption_label",
-    caption = (enough and COLOR_READY or COLOR_MISSING) .. have .. " / " .. need .. COLOR_END,
-  }
-
-  local slots = frame.add{type = "table", column_count = 8}
-  slots.style.top_margin = 4
-  for _, idx in ipairs(indices) do
-    add_slot(slots, portal, idx, cost.name)
-  end
+-- Does a panel have the structure this version of the code expects?
+local function panel_is_current(panel)
+  return panel.portal_content and panel.portal_content.portal_body
 end
 
--- (Re)fill the window from current portal contents, grouped into sections.
-local function populate_list(content, portal)
-  content.clear()
-  local map = build_slot_map()
+-- (Re)fill the travel panel: a destination row per planet, then the per-trip cost.
+local function populate_panel(panel, portal)
+  if not panel_is_current(panel) then return end
+  local body = panel.portal_content.portal_body
+  body.clear()
 
-  -- Section: travel destinations (each with its own module slot).
-  add_section_header(content, "Destinations")
-  local dests = add_section_body(content)
-  local hint = dests.add{
-    type    = "label",
-    caption = "Shift-click a slot to load it from your inventory (or take it back).",
-    style   = "label",
-  }
-  hint.style.single_line = false
-  hint.style.bottom_margin = 2
   for _, dest in ipairs(DESTINATIONS) do
-    add_destination_card(dests, portal, dest, map.dest[dest.surface])
+    add_destination_row(body, portal, dest)
   end
 
-  -- Section: modifier-module slots (cargo, free travel) — always shown so they can
-  -- be installed, but kept compact as plain slots rather than verbose cards.
-  if map.cargo or map.free then
-    add_section_header(content, "Modules")
-    local mods = add_section_body(content)
-    local row  = mods.add{type = "flow", direction = "horizontal"}
-    row.style.horizontal_spacing = 16
-    if map.cargo then add_labeled_slot(row, portal, map.cargo, CARGO_MODULE, "Cargo") end
-    if map.free  then add_labeled_slot(row, portal, map.free, FREE_TRAVEL_MODULE, "Free Travel") end
-  end
-
-  -- Section: per-trip resource cost, each resource with its own fill slots.
-  add_section_header(content, "Warp Resources")
-  local res = add_section_body(content)
+  body.add{type = "line"}
   if portal_allows_free_travel(portal) then
-    res.add{type = "label", caption = COLOR_READY .. "Free Travel Module installed — warps are free." .. COLOR_END}
+    body.add{type = "label", caption = COLOR_READY .. "Free Travel Module — warps are free." .. COLOR_END}
   elseif settings.global["portal-travel-cost-multiplier"].value <= 0 then
-    res.add{type = "label", caption = COLOR_READY .. "Travel cost disabled — warps are free." .. COLOR_END}
+    body.add{type = "label", caption = COLOR_READY .. "Travel is free." .. COLOR_END}
   else
-    res.add{type = "label", caption = "Consumed from the portal each trip:", style = "label"}
+    body.add{type = "label", caption = "Warp cost per trip:", style = "caption_label"}
     for _, c in ipairs(WARP_COST) do
-      add_resource_group(res, portal, c, map.res[c.name])
+      local need   = cost_amount(c.amount)
+      local have   = portal_module_count(portal, c.name)
+      local enough = have >= need
+
+      local r = body.add{type = "flow", direction = "horizontal"}
+      r.style.vertical_align = "center"
+      r.style.horizontal_spacing = 6
+      local ic = r.add{type = "sprite", sprite = "item/" .. c.name}
+      ic.style.size = 20
+      r.add{
+        type    = "label",
+        caption = (enough and COLOR_READY or COLOR_MISSING) .. have .. " / " .. need .. COLOR_END,
+      }
     end
   end
 end
 
--- Open the custom portal window in place of the native inventory grid.
+-- Dock a compact Travel panel onto the side of the portal's native window. The warp
+-- modules and resources are loaded directly into the window's own item slots.
 local function open_portal_gui(player, entity)
   close_portal_gui(player)
 
@@ -630,32 +530,16 @@ local function open_portal_gui(player, entity)
     position     = entity.position,
   }
 
-  local frame = player.gui.screen.add{
+  local frame = player.gui.relative.add{
     type      = "frame",
     name      = PORTAL_GUI,
+    caption   = "Travel",
     direction = "vertical",
-  }
-  frame.auto_center = true
-
-  -- Draggable titlebar with a close button.
-  local titlebar = frame.add{type = "flow", direction = "horizontal"}
-  titlebar.drag_target = frame
-  titlebar.add{
-    type    = "label",
-    caption = "Interplanetary Portal",
-    style   = "frame_title",
-    ignored_by_interaction = true,
-  }
-  local drag = titlebar.add{type = "empty-widget", style = "draggable_space_header"}
-  drag.style.horizontally_stretchable = true
-  drag.style.height = 24
-  drag.drag_target = frame
-  titlebar.add{
-    type    = "sprite-button",
-    name    = "portal_close",
-    style   = "frame_action_button",
-    sprite  = "utility/close",
-    tooltip = "Close",
+    anchor    = {
+      gui      = defines.relative_gui_type.container_gui,
+      position = defines.relative_gui_position.right,
+      name     = PORTAL_NAME,  -- only dock onto the portal, not other containers
+    },
   }
 
   local content = frame.add{
@@ -664,18 +548,12 @@ local function open_portal_gui(player, entity)
     style     = "inside_shallow_frame",
     direction = "vertical",
   }
-  content.style.minimal_width = 360
+  local body = content.add{type = "flow", name = "portal_body", direction = "vertical"}
+  body.style.padding = 8
+  body.style.vertical_spacing = 6
+  body.style.minimal_width = 260
 
-  -- Sections (subheader bars + bodies) are added straight into this flow so each
-  -- divider spans the full window width.
-  local list = content.add{type = "flow", name = "portal_list", direction = "vertical"}
-  list.style.horizontally_stretchable = true
-  list.style.vertical_spacing = 0
-
-  populate_list(list, entity)
-
-  -- Take over the open-GUI slot so E / Esc closes our window (and not the chest).
-  player.opened = frame
+  populate_panel(frame, entity)
 end
 
 -- Track the installed-module signature so the panel only rebuilds when it changes.
@@ -695,11 +573,11 @@ local function portal_signature(portal)
   return table.concat(parts, ",")
 end
 
--- Rebuild a player's open window from current portal contents and resync its signature.
+-- Rebuild a player's open panel from current portal contents and resync its signature.
 local function rebuild_panel(player, portal)
-  local panel = player.gui.screen[PORTAL_GUI]
+  local panel = player.gui.relative[PORTAL_GUI]
   if panel and panel.valid and portal then
-    populate_list(panel.portal_content.portal_list, portal)
+    populate_panel(panel, portal)
     panel_signatures[player.index] = portal_signature(portal)
   end
 end
@@ -708,64 +586,26 @@ end
 local function refresh_open_panels()
   for player_index in pairs(storage.player_portal) do
     local player = game.get_player(player_index)
-    local panel  = player and player.gui.screen[PORTAL_GUI]
+    local panel  = player and player.gui.relative[PORTAL_GUI]
     local portal = player and get_player_portal(player)
     if player and panel and panel.valid then
       if not portal then
-        -- Portal was mined/destroyed while open: close the orphaned window.
+        -- Portal was mined/destroyed while open: close the orphaned panel.
         close_portal_gui(player)
         panel_signatures[player_index] = nil
+      elseif not panel_is_current(panel) then
+        -- Panel left over from an older build: rebuild it to the current layout.
+        open_portal_gui(player, portal)
+        panel_signatures[player_index] = portal_signature(portal)
       else
         local sig = portal_signature(portal)
         if panel_signatures[player_index] ~= sig then
           panel_signatures[player_index] = sig
-          populate_list(panel.portal_content.portal_list, portal)
+          populate_panel(panel, portal)
         end
       end
     end
   end
-end
-
--- Handle a click on a chest slot button: swap with the cursor, or shift-click to
--- quick-move between the slot and the player's main inventory. Filters keep each
--- slot to its intended item.
-local function handle_slot_click(player, index, event)
-  local portal = get_player_portal(player)
-  if not portal then close_portal_gui(player); return end
-
-  local inv = portal.get_inventory(defines.inventory.chest)
-  if not inv or not inv[index] then return end
-  local slot    = inv[index]
-  local allowed = portal_filter_layout()[index]
-
-  if event.shift then
-    -- Quick-transfer the whole item between the portal and the player's inventory.
-    -- (The player's inventory isn't shown next to this window, so this is the main
-    -- way to load and unload — fills/empties every slot of the clicked item at once.)
-    local main = player.get_main_inventory()
-    if not main then return end
-    if slot.valid_for_read then
-      local item  = slot.name
-      local moved = main.insert{name = item, count = inv.get_item_count(item)}
-      if moved > 0 then inv.remove{name = item, count = moved} end
-    elseif allowed then
-      local avail = main.get_item_count(allowed)
-      if avail > 0 then
-        local inserted = inv.insert{name = allowed, count = avail}
-        if inserted > 0 then main.remove{name = allowed, count = inserted} end
-      end
-    end
-  else
-    -- Precise placement/pickup with whatever is on the cursor.
-    local cursor = player.cursor_stack
-    if cursor and cursor.valid_for_read and allowed and cursor.name ~= allowed then
-      player.play_sound{path = "utility/cannot_build"}  -- wrong item for this slot
-      return
-    end
-    if cursor then slot.swap_stack(cursor) end
-  end
-
-  rebuild_panel(player, portal)
 end
 
 ------------------------------------------------------------
@@ -784,9 +624,8 @@ script.on_event(defines.events.on_gui_opened, function(event)
     return
   end
 
-  -- Replace the native inventory grid with our own grouped window. Closing the
-  -- native window first stops both showing at once.
-  player.opened = nil
+  -- Let the native window open (warp modules and resources are loaded into its own
+  -- filtered item slots) and dock the Travel panel onto it.
   open_portal_gui(player, entity)
 end)
 
@@ -799,20 +638,6 @@ script.on_event(defines.events.on_gui_click, function(event)
   if not element or not element.valid then return end
   local player = game.get_player(event.player_index)
   local name   = element.name
-
-  -- Titlebar close button.
-  if name == "portal_close" then
-    close_portal_gui(player)
-    player.opened = nil
-    return
-  end
-
-  -- Slot buttons are named "portal_slot_<chest-inventory-index>"
-  local slot_prefix = "portal_slot_"
-  if name:sub(1, #slot_prefix) == slot_prefix then
-    handle_slot_click(player, tonumber(name:sub(#slot_prefix + 1)), event)
-    return
-  end
 
   -- Travel buttons are named "portal_travel_<surface>"
   local prefix = "portal_travel_"
@@ -867,7 +692,7 @@ script.on_event(defines.events.on_gui_click, function(event)
   end
 
   close_portal_gui(player)
-  player.opened = nil  -- drop the open-GUI binding for the now-closed window
+  player.opened = nil  -- close the portal window too
 
   local dest_surface
   if game.planets[dest_planet] then
@@ -904,8 +729,8 @@ end)
 ------------------------------------------------------------
 
 script.on_event(defines.events.on_gui_closed, function(event)
-  -- When our window closes (E / Esc), tear it down and forget its state.
-  if event.element and event.element.valid and event.element.name == PORTAL_GUI then
+  -- When the portal window closes (E / Esc), tear down the docked panel.
+  if event.entity and event.entity.valid and event.entity.name == PORTAL_NAME then
     local player = game.get_player(event.player_index)
     if player then close_portal_gui(player) end
     panel_signatures[event.player_index] = nil
