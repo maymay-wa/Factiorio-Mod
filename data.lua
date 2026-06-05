@@ -301,19 +301,18 @@ end
 -- Cargo warp module — bring items through the portal
 ------------------------------------------------------------
 -- A capstone module: installing it in a portal lets travellers carry their
--- inventory through instead of having to empty it first. Crafting it consumes
--- one of every planet warp module, and its technology requires all of theirs,
--- so you can only build it once you already own every other module.
+-- inventory through instead of having to empty it first. Its technology requires
+-- every planet module, so you can only build it once you already own every other
+-- module.
 
 local CARGO_MODULE_NAME = "warp-module-cargo"
 local CARGO_TINT        = {r = 0.25, g = 0.25, b = 0.25, a = 1.0}
 
-local cargo_ingredients = {}
-local cargo_prereqs     = {PORTAL_NAME}
+-- The tech still requires every planet module as a prerequisite, so you can only
+-- build the cargo module once you already own every other module.
+local cargo_prereqs = {PORTAL_NAME}
 for _, planet in ipairs(planets) do
-  local module_name = "warp-module-" .. planet.name
-  table.insert(cargo_ingredients, {type = "item", name = module_name, amount = 1})
-  table.insert(cargo_prereqs, module_name)
+  table.insert(cargo_prereqs, "warp-module-" .. planet.name)
 end
 
 local cargo_item = {
@@ -332,8 +331,12 @@ local cargo_recipe = {
   name            = CARGO_MODULE_NAME,
   enabled         = false,
   energy_required = DEV_MODE and 0.5 or 60,
-  -- Always requires one of every planet module — that is the point of it.
-  ingredients     = cargo_ingredients,
+  ingredients     = DEV_MODE and
+    {{type = "item", name = "iron-plate", amount = 1}} or
+    {
+      {type = "item", name = "processing-unit",        amount = 1000},
+      {type = "item", name = "low-density-structure",  amount = 1000},
+    },
   results         = {{type = "item", name = CARGO_MODULE_NAME, amount = 1}},
 }
 
@@ -397,11 +400,10 @@ local free_travel_recipe = {
   energy_required = DEV_MODE and 0.5 or 60,
   ingredients     = DEV_MODE and
     {{type = "item", name = "iron-plate", amount = 1}} or
-    scale_ingredients({
-      {type = "item", name = "low-density-structure", amount = 20},
-      {type = "item", name = "rocket-fuel",           amount = 50},
-      {type = "item", name = "processing-unit",       amount = 20},
-    }, RECIPE_MULT),
+    {
+      {type = "item", name = "processing-unit",        amount = 1000},
+      {type = "item", name = "low-density-structure",  amount = 1000},
+    },
   results         = {{type = "item", name = FREE_TRAVEL_NAME, amount = 1}},
 }
 
