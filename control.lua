@@ -21,6 +21,15 @@ local DESTINATIONS = {
 -- absent from DESTINATIONS.
 local CARGO_MODULE = "warp-module-cargo"
 
+-- When installed in a portal, warping no longer consumes the rocket-fuel fee.
+local FREE_TRAVEL_MODULE = "warp-module-free-travel"
+
+-- Each trip costs WARP_FUEL_BASE rocket fuel (scaled by the travel-cost setting),
+-- consumed from the portal's own inventory. Stock the portal with fuel, or install
+-- a Free Travel Module to skip the fee entirely.
+local WARP_FUEL_ITEM = "rocket-fuel"
+local WARP_FUEL_BASE = 10
+
 local COLOR_READY    = "[color=#5fd35f]"
 local COLOR_MISSING  = "[color=#9e9e9e]"
 local COLOR_END      = "[/color]"
@@ -315,6 +324,15 @@ local function portal_allows_cargo(portal_entity)
   return portal_module_count(portal_entity, CARGO_MODULE) > 0
 end
 
+local function portal_allows_free_travel(portal_entity)
+  return portal_module_count(portal_entity, FREE_TRAVEL_MODULE) > 0
+end
+
+-- Rocket fuel consumed per trip, after the travel-cost-multiplier setting.
+local function warp_fee()
+  return math.max(0, math.floor(WARP_FUEL_BASE * settings.global["portal-travel-cost-multiplier"].value))
+end
+
 -- Resolve the portal entity the player currently has open from stored coords.
 local function get_player_portal(player)
   local pdata = storage.player_portal[player.index]
@@ -410,6 +428,42 @@ local function populate_list(list, portal)
       caption = COLOR_READY .. "Inventory travels with you" .. COLOR_END,
     }
   end
+
+  -- Warp fuel status: a Free Travel Module waives the fee; otherwise show whether
+  -- the portal holds enough rocket fuel for the next trip.
+  list.add{type = "line"}
+  if portal_allows_free_travel(portal) then
+    local card = list.add{type = "frame", style = "deep_frame_in_shallow_frame", direction = "horizontal"}
+    card.style.padding = 8
+    card.style.minimal_width = 280
+
+    local row = card.add{type = "flow", direction = "horizontal"}
+    row.style.vertical_align = "center"
+    row.style.horizontal_spacing = 12
+    row.style.horizontally_stretchable = true
+
+    local icon = row.add{type = "sprite", sprite = "item/" .. FREE_TRAVEL_MODULE, resize_to_sprite = false}
+    icon.style.size = 32
+
+    local info = row.add{type = "flow", direction = "vertical"}
+    info.style.horizontally_stretchable = true
+    info.style.vertical_spacing = 2
+    info.add{type = "label", caption = "Free Travel Module", style = "caption_label"}
+    info.add{type = "label", caption = COLOR_READY .. "Warps cost no fuel" .. COLOR_END}
+  else
+    local fee  = warp_fee()
+    local have = portal_module_count(portal, WARP_FUEL_ITEM)
+    if fee <= 0 then
+      list.add{type = "label", caption = COLOR_READY .. "Travel is free (fuel cost disabled)" .. COLOR_END}
+    else
+      local enough = have >= fee
+      list.add{
+        type    = "label",
+        caption = (enough and COLOR_READY or COLOR_MISSING)
+          .. "Warp fuel: " .. have .. "/" .. fee .. " rocket fuel" .. COLOR_END,
+      }
+    end
+  end
 end
 
 -- Dock the destination panel onto the portal's native inventory window.
@@ -455,7 +509,10 @@ local function portal_signature(portal)
     parts[#parts + 1] = portal_module_count(portal, dest.module) > 0 and "1" or "0"
   end
   parts[#parts + 1] = portal_allows_cargo(portal) and "1" or "0"
-  return table.concat(parts)
+  parts[#parts + 1] = portal_allows_free_travel(portal) and "1" or "0"
+  -- Include the live fuel count so the "Warp fuel: x/y" label stays accurate.
+  parts[#parts + 1] = "f" .. portal_module_count(portal, WARP_FUEL_ITEM)
+  return table.concat(parts, ",")
 end
 
 -- Refresh open panels as players drag modules in/out (no inventory-change event for chests).
@@ -544,6 +601,21 @@ script.on_event(defines.events.on_gui_click, function(event)
       color    = {r = 1, g = 0.5, b = 0},
     }
     return
+  end
+
+  -- Per-trip warp fee, paid from the portal's own inventory (travellers without a
+  -- cargo module arrive empty-handed, so the player can't be charged directly).
+  if not portal_allows_free_travel(portal) then
+    local fee = warp_fee()
+    if fee > 0 then
+      local inv = portal.get_inventory(defines.inventory.chest)
+      if not inv or inv.get_item_count(WARP_FUEL_ITEM) < fee then
+        show_warning(player, "Portal needs " .. fee ..
+          " rocket fuel to warp. Add fuel to the portal or install a Free Travel Module.")
+        return
+      end
+      inv.remove{name = WARP_FUEL_ITEM, count = fee}
+    end
   end
 
   close_portal_gui(player)

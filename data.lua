@@ -7,6 +7,10 @@
 
 local DEV_MODE = false
 
+-- Player-facing tuning (see settings.lua).
+local RECIPE_MULT   = settings.startup["portal-recipe-cost-multiplier"].value
+local CARGO_ENABLED = settings.startup["portal-enable-cargo-module"].value
+
 local PORTAL_NAME = "interplanetary-portal"
 
 local planets = {
@@ -105,6 +109,15 @@ local planets = {
 -- Helpers
 ------------------------------------------------------------
 
+-- Copy an ingredient list with each amount scaled by mult (never below 1).
+local function scale_ingredients(list, mult)
+  local out = {}
+  for i, ing in ipairs(list) do
+    out[i] = {type = ing.type, name = ing.name, amount = math.max(1, math.floor(ing.amount * mult))}
+  end
+  return out
+end
+
 local function apply_tint_recursive(t, tint)
   if type(t) ~= "table" then return end
   if t.filename then
@@ -157,8 +170,9 @@ end
 local cargo_pad_base = data.raw["cargo-landing-pad"]["cargo-landing-pad"]
 
 local portal_entity = make_dumb_pad(cargo_pad_base, PORTAL_NAME, nil)
--- One slot per planet warp module, plus one for the cargo warp module.
-portal_entity.inventory_size = #planets + 1
+-- One slot per planet warp module, the optional cargo module, the free-travel
+-- module, plus two spare slots to stock rocket fuel for the per-trip warp fee.
+portal_entity.inventory_size = #planets + (CARGO_ENABLED and 1 or 0) + 1 + 2
 
 local portal_item = {
   type         = "item",
@@ -178,10 +192,10 @@ local portal_recipe = {
   energy_required = DEV_MODE and 0.5 or 30,
   ingredients     = DEV_MODE and
     {{type = "item", name = "steel-plate", amount = 1}} or
-    {
+    scale_ingredients({
       {type = "item", name = "concrete",    amount = 1000},
       {type = "item", name = "steel-plate", amount = 1000},
-    },
+    }, RECIPE_MULT),
   results         = {{type = "item", name = PORTAL_NAME, amount = 1}},
 }
 
@@ -240,7 +254,7 @@ for _, planet in ipairs(planets) do
     energy_required = DEV_MODE and 0.5 or 30,
     ingredients     = DEV_MODE and
       {{type = "item", name = "iron-plate", amount = 1}} or
-      planet.ingredients,
+      scale_ingredients(planet.ingredients, RECIPE_MULT),
     results         = {{type = "item", name = module_name, amount = 1}},
   }
 
@@ -334,7 +348,71 @@ local cargo_tech = {
   effects       = {{type = "unlock-recipe", recipe = CARGO_MODULE_NAME}},
 }
 
-data:extend({cargo_item, cargo_recipe, cargo_tech})
+if CARGO_ENABLED then
+  data:extend({cargo_item, cargo_recipe, cargo_tech})
+end
+
+------------------------------------------------------------
+-- Free travel module — removes the per-trip warp fuel fee
+------------------------------------------------------------
+-- A capstone upgrade: installing it in a portal lets travellers warp without
+-- consuming rocket fuel. Its technology is deliberately cheap ("research it for
+-- free"); the recipe — a rocket-launch's worth of materials — is the real gate.
+
+local FREE_TRAVEL_NAME = "warp-module-free-travel"
+local FREE_TRAVEL_TINT = {r = 0.3, g = 0.85, b = 0.85, a = 1.0}
+
+local free_travel_item = {
+  type       = "item",
+  name       = FREE_TRAVEL_NAME,
+  icons      = {
+    {icon = "__interplanetary-portals__/Assets/disk_sprite.png", icon_size = 256, tint = FREE_TRAVEL_TINT},
+  },
+  subgroup   = "space-related",
+  order      = "z[warp-module]-zz-free-travel",
+  stack_size = 1,
+}
+
+local free_travel_recipe = {
+  type            = "recipe",
+  name            = FREE_TRAVEL_NAME,
+  enabled         = false,
+  energy_required = DEV_MODE and 0.5 or 60,
+  ingredients     = DEV_MODE and
+    {{type = "item", name = "iron-plate", amount = 1}} or
+    scale_ingredients({
+      {type = "item", name = "low-density-structure", amount = 20},
+      {type = "item", name = "rocket-fuel",           amount = 50},
+      {type = "item", name = "processing-unit",       amount = 20},
+    }, RECIPE_MULT),
+  results         = {{type = "item", name = FREE_TRAVEL_NAME, amount = 1}},
+}
+
+local free_travel_tech = {
+  type          = "technology",
+  name          = FREE_TRAVEL_NAME,
+  icons         = {
+    {icon = "__interplanetary-portals__/Assets/disk_sprite.png", icon_size = 256, tint = FREE_TRAVEL_TINT},
+  },
+  prerequisites = {PORTAL_NAME},
+  unit          = DEV_MODE and {
+    count       = 1,
+    ingredients = {{"automation-science-pack", 1}},
+    time        = 1,
+  } or {
+    count       = 50,
+    ingredients = {
+      {"automation-science-pack", 1},
+      {"logistic-science-pack",   1},
+      {"chemical-science-pack",   1},
+      {"space-science-pack",      1},
+    },
+    time        = 30,
+  },
+  effects       = {{type = "unlock-recipe", recipe = FREE_TRAVEL_NAME}},
+}
+
+data:extend({free_travel_item, free_travel_recipe, free_travel_tech})
 
 ------------------------------------------------------------
 -- Portal animation (used by rendering.draw_animation in control.lua)
