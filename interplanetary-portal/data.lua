@@ -5,7 +5,7 @@
 -- Configuration
 ------------------------------------------------------------
 
-local DEV_MODE = true
+local DEV_MODE = false
 
 -- Player-facing tuning (see settings.lua).
 local RECIPE_MULT   = settings.startup["portal-recipe-cost-multiplier"].value
@@ -19,9 +19,9 @@ local planets = {
     label              = "Nauvis",
     tint               = {r = 1.0, g = 1.0, b = 1.0, a = 1.0},
     ingredients        = {
-      {type = "item", name = "electronic-circuit", amount = 200},
-      {type = "item", name = "iron-plate",         amount = 100},
-      {type = "item", name = "copper-plate",        amount = 100},
+      {type = "item", name = "processing-unit",       amount = 200},
+      {type = "item", name = "low-density-structure", amount = 100},
+      {type = "item", name = "rocket-fuel",           amount = 100},
     },
     tech_prerequisites = {},  -- base portal tech already covers rocket-silo
     science_packs      = {
@@ -36,9 +36,8 @@ local planets = {
     label              = "Vulcanus",
     tint               = {r = 0.957, g = 0.714, b = 0.333, a = 1.0},
     ingredients        = {
-      {type = "item", name = "tungsten-plate",   amount = 200},
-      {type = "item", name = "tungsten-carbide",  amount = 100},
-      {type = "item", name = "carbon",            amount = 50},
+      {type = "item", name = "tungsten-plate",   amount = 500},
+      {type = "item", name = "tungsten-carbide",  amount = 500},
     },
     tech_prerequisites = {"planet-discovery-vulcanus"},
     science_packs      = {
@@ -54,9 +53,8 @@ local planets = {
     label              = "Fulgora",
     tint               = {r = 0.886, g = 0.439, b = 0.725, a = 1.0},
     ingredients        = {
-      {type = "item", name = "holmium-plate",  amount = 200},
-      {type = "item", name = "superconductor",  amount = 100},
-      {type = "item", name = "lightning-rod",   amount = 50},
+      {type = "item", name = "holmium-plate",  amount = 500},
+      {type = "item", name = "superconductor",  amount = 500},
     },
     tech_prerequisites = {"planet-discovery-fulgora"},
     science_packs      = {
@@ -73,8 +71,7 @@ local planets = {
     tint               = {r = 0.890, g = 0.871, b = 0.369, a = 1.0},
     ingredients        = {
       {type = "item", name = "bioflux",      amount = 200},
-      {type = "item", name = "carbon-fiber",  amount = 100},
-      {type = "item", name = "nutrients",     amount = 50},
+      {type = "item", name = "carbon-fiber",  amount = 300},
     },
     tech_prerequisites = {"planet-discovery-gleba"},
     science_packs      = {
@@ -91,8 +88,7 @@ local planets = {
     tint               = {r = 0.204, g = 0.271, b = 0.737, a = 1.0},
     ingredients        = {
       {type = "item", name = "lithium-plate",    amount = 200},
-      {type = "item", name = "quantum-processor", amount = 100},
-      {type = "item", name = "ice-platform",      amount = 50},
+      {type = "item", name = "ice-platform",      amount = 500},
     },
     tech_prerequisites = {"planet-discovery-aquilo"},
     science_packs      = {
@@ -326,6 +322,14 @@ local cargo_item = {
   stack_size = 1,
 }
 
+-- Collect all planet ingredients so the cargo module demands resources from every planet.
+local cargo_planet_ingredients = {}
+for _, planet in ipairs(planets) do
+  for _, ing in ipairs(planet.ingredients) do
+    table.insert(cargo_planet_ingredients, {type = ing.type, name = ing.name, amount = ing.amount})
+  end
+end
+
 local cargo_recipe = {
   type            = "recipe",
   name            = CARGO_MODULE_NAME,
@@ -333,10 +337,7 @@ local cargo_recipe = {
   energy_required = DEV_MODE and 0.5 or 60,
   ingredients     = DEV_MODE and
     {{type = "item", name = "iron-plate", amount = 1}} or
-    {
-      {type = "item", name = "processing-unit",        amount = 1000},
-      {type = "item", name = "low-density-structure",  amount = 1000},
-    },
+    scale_ingredients(cargo_planet_ingredients, RECIPE_MULT),
   results         = {{type = "item", name = CARGO_MODULE_NAME, amount = 1}},
 }
 
@@ -397,13 +398,15 @@ local free_travel_recipe = {
   type            = "recipe",
   name            = FREE_TRAVEL_NAME,
   enabled         = false,
-  energy_required = DEV_MODE and 0.5 or 60,
+  energy_required = DEV_MODE and 0.5 or 120,
   ingredients     = DEV_MODE and
     {{type = "item", name = "iron-plate", amount = 1}} or
-    {
-      {type = "item", name = "processing-unit",        amount = 1000},
-      {type = "item", name = "low-density-structure",  amount = 1000},
-    },
+    scale_ingredients({
+      {type = "item", name = "processing-unit",       amount = 2000},
+      {type = "item", name = "low-density-structure", amount = 2000},
+      {type = "item", name = "rocket-fuel",           amount = 500},
+      {type = "item", name = "tungsten-carbide",      amount = 1000},
+    }, RECIPE_MULT),
   results         = {{type = "item", name = FREE_TRAVEL_NAME, amount = 1}},
 }
 
