@@ -8,3 +8,34 @@ Date: 2026-06-05
   Changes:
     - Each warp module and warp resource now has its own dedicated, filtered slot in the portal.
     - The portal GUI shows the per-trip warp cost and free-travel state.
+
+---------------------------------------------------------------------------------------------------
+Version: 1.3.0
+Date: 2026-05-20
+  Features:
+    - Added Cargo Warp Module: install it in a portal to carry your full inventory through.
+    - Players without the Cargo Warp Module are now warned and blocked from warping with items.
+
+---------------------------------------------------------------------------------------------------
+Version: 1.2.0
+Date: 2026-05-10
+  Features:
+    - Added animated teleport screen effect: dark vignette fades in, portal swirl grows, then fades out on arrival.
+    - Added persistent portal animation rendered on the entity itself.
+
+---------------------------------------------------------------------------------------------------
+Version: 1.1.0
+Date: 2026-05-01
+  Features:
+    - Added one-portal-per-planet build limit with a warning when the limit is exceeded.
+    - Portal GUI now docks a Travel panel onto the native entity window.
+    - Travel buttons are greyed out until the matching warp module is installed.
+
+---------------------------------------------------------------------------------------------------
+Version: 1.0.0
+Date: 2026-04-20
+  Features:
+    - Initial release.
+    - Adds the Interplanetary Portal entity, craftable via a new technology requiring Rocket Silo.
+    - Adds five planet Warp Modules (Nauvis, Vulcanus, Fulgora, Gleba, Aquilo), each unlocked by its own technology.
+    - Walk into a portal to teleport to the selected destination planet.

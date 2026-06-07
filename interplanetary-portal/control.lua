@@ -259,12 +259,12 @@ local function destroy_overlay(renders)
   destroy_swirl(renders)
 end
 
-local function start_teleport(player, dest_surface, dest_pos, dest_planet)
+local function start_teleport(player, dest_surface, dest_pos, dest_label)
   storage.teleporting[player.index] = {
     t                 = 0,
     dest_surface_name = dest_surface.name,
     dest_pos          = dest_pos,
-    dest_planet       = dest_planet,
+    dest_label        = dest_label,
     renders           = draw_teleport_overlay(player, 0, true),
   }
 end
@@ -319,7 +319,7 @@ local function drive_teleports()
           destroy_overlay(tp.renders)
           storage.teleporting[player_index] = nil
           player.create_local_flying_text{
-            text     = {"", "Welcome to ", tp.dest_planet, "!"},
+            text     = {"", "Welcome to ", tp.dest_label, "!"},
             position = player.position,
             color    = {r = 0.3, g = 1, b = 0.5},
           }
@@ -644,6 +644,11 @@ script.on_event(defines.events.on_gui_click, function(event)
   if name:sub(1, #prefix) ~= prefix then return end
   local dest_planet = name:sub(#prefix + 1)
 
+  local dest_label = dest_planet
+  for _, d in ipairs(DESTINATIONS) do
+    if d.surface == dest_planet then dest_label = d.label; break end
+  end
+
   local portal = get_player_portal(player)
   if not portal then
     player.create_local_flying_text{
@@ -682,13 +687,14 @@ script.on_event(defines.events.on_gui_click, function(event)
 
   -- Per-trip warp fee, paid from the portal's own inventory (travellers without a
   -- cargo module arrive empty-handed, so the player can't be charged directly).
+  -- Affordability is checked here; the charge itself is deferred until just before
+  -- the teleport begins so resources are never consumed on a failed warp.
   if not portal_allows_free_travel(portal) then
     if not portal_can_afford(portal) then
       show_warning(player, "Portal needs " .. warp_cost_text() ..
         " per warp. Stock the portal or install a Free Travel Module.")
       return
     end
-    charge_warp(portal)
   end
 
   close_portal_gui(player)
@@ -710,18 +716,26 @@ script.on_event(defines.events.on_gui_click, function(event)
     return
   end
 
-  local cargo_pads = dest_surface.find_entities_filtered{name = "cargo-landing-pad"}
+  -- Prefer arriving at the destination portal; fall back to a cargo-landing-pad.
   local tp_pos
-  if #cargo_pads > 0 then
-    tp_pos = {x = cargo_pads[1].position.x + 3, y = cargo_pads[1].position.y + 3}
+  local dest_portals = dest_surface.find_entities_filtered{name = PORTAL_NAME}
+  if #dest_portals > 0 then
+    local p = dest_portals[1].position
+    tp_pos = {x = p.x + 2, y = p.y}
   else
-    tp_pos = {x = 3, y = 3}
+    local cargo_pads = dest_surface.find_entities_filtered{name = "cargo-landing-pad"}
+    if #cargo_pads > 0 then
+      tp_pos = {x = cargo_pads[1].position.x + 3, y = cargo_pads[1].position.y + 3}
+    else
+      tp_pos = {x = 3, y = 3}
+    end
   end
 
   local safe_pos = dest_surface.find_non_colliding_position("character", tp_pos, 10, 0.5)
 
   if storage.teleporting[player.index] then return end  -- already mid-teleport
-  start_teleport(player, dest_surface, safe_pos or tp_pos, dest_planet)
+  if not portal_allows_free_travel(portal) then charge_warp(portal) end
+  start_teleport(player, dest_surface, safe_pos or tp_pos, dest_label)
 end)
 
 ------------------------------------------------------------

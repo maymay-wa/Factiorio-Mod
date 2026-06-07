@@ -1,15 +1,14 @@
 {
   "name": "interplanetary-portals",
-  "version": "1.4.0",
+  "version": "1.0.0",
   "title": "Interplanetary Portals",
-  "author": "PortalCraft",
+  "author": "fulmenu",
   "contact": "",
   "homepage": "",
-  "description": "Adds Nether Portal-style gateways to travel between planets. Build a portal on one planet and a receiver on the destination — walk in and teleport instantly!",
+  "description": "Adds Portal gateways to travel between planets. Build one portal on each planet you want to connect — walk in and teleport instantly!",
   "factorio_version": "2.0",
-  "space_travel_required": true,
   "dependencies": [
     "base >= 2.0.0",
     "space-age >= 2.0.0"
-  ]
+  ] 
 }
