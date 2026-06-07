@@ -1,22 +1,31 @@
 -- control.lua — factorio-puppy
+-- Uses the engine's native unit command system for smooth movement
+-- instead of manual teleportation.
 
 ------------------------------------------------------------
 -- Constants
 ------------------------------------------------------------
 
 local PUPPY_NAME      = "factorio-puppy-entity"
-local FOLLOW_RADIUS   = 2.0   -- tiles: puppy stops this far from the player
-local FOLLOW_INTERVAL = 20    -- ticks between movement updates
-local RESPAWN_DELAY   = 180   -- ticks (~3 s) before respawning after death
-local BASE_PUPPY_SPEED = 0.18 -- tiles/tick at base player speed (player base ≈ 0.15)
+local FOLLOW_RADIUS   = 3.0    -- tiles: puppy idles when this close
+local UPDATE_INTERVAL = 6      -- ticks between movement checks (~10/sec)
+local TELEPORT_DIST   = 15     -- tiles: teleport if further than this
+local CMD_RETHINK     = 2.0    -- tiles: re-issue move command when player moved this far
+local RESPAWN_DELAY   = 180    -- ticks (~3 s) before respawning after death
+local WANDER_RADIUS   = 1.5    -- tiles: gentle wander range when idle
 local SPAWN_OFFSET    = { x = 2, y = 0 }
 
 ------------------------------------------------------------
 -- Helpers
 ------------------------------------------------------------
 
+local function dist(a, b)
+  local dx = a.x - b.x
+  local dy = a.y - b.y
+  return math.sqrt(dx * dx + dy * dy)
+end
+
 local function is_space_surface(surface)
-  -- Space platform surfaces have surface.platform set; planet surfaces do not.
   return surface.platform ~= nil
 end
 
@@ -27,26 +36,59 @@ end
 --   entity       : LuaEntity | nil
 --   respawn_tick : number | nil
 --   in_space     : boolean
+--   last_cmd_pos : {x,y} | nil    -- last position we commanded the puppy to walk to
+--   idle         : boolean         -- true when puppy is wandering near the player
 -- }
+
+local function make_entry(overrides)
+  local e = {
+    entity       = nil,
+    respawn_tick = nil,
+    in_space     = false,
+    last_cmd_pos = nil,
+    idle         = false,
+  }
+  if overrides then
+    for k, v in pairs(overrides) do e[k] = v end
+  end
+  return e
+end
 
 local function init_storage()
   storage.puppies = storage.puppies or {}
 end
 
-script.on_init(init_storage)
-
-script.on_configuration_changed(function()
+--- Schedule a puppy for every connected player who doesn't have one yet.
+--- Called on first load AND whenever mod config changes (e.g. adding the mod
+--- to an existing save).
+local function ensure_puppies_for_all_players()
   init_storage()
-  -- Re-validate entity references after a mod update or save/load.
-  for player_index, entry in pairs(storage.puppies) do
-    if entry.entity and not entry.entity.valid then
-      entry.entity = nil
-      if not entry.in_space then
-        entry.respawn_tick = game.tick + RESPAWN_DELAY
+  for _, player in pairs(game.players) do
+    local entry = storage.puppies[player.index]
+    if not entry then
+      -- Brand-new player for this mod — schedule a spawn.
+      if player.connected and player.character and player.character.valid
+         and not is_space_surface(player.surface) then
+        storage.puppies[player.index] = make_entry{
+          respawn_tick = game.tick + 60,
+        }
       end
+    else
+      -- Existing entry — re-validate the entity reference.
+      if entry.entity and not entry.entity.valid then
+        entry.entity = nil
+        if not entry.in_space then
+          entry.respawn_tick = game.tick + RESPAWN_DELAY
+        end
+      end
+      entry.last_cmd_pos = nil
+      entry.idle = false
     end
   end
-end)
+end
+
+script.on_init(ensure_puppies_for_all_players)
+script.on_configuration_changed(ensure_puppies_for_all_players)
 
 ------------------------------------------------------------
 -- Spawning / despawning
@@ -61,22 +103,22 @@ local function spawn_puppy(player)
   local target  = { x = pos.x + SPAWN_OFFSET.x, y = pos.y + SPAWN_OFFSET.y }
   local safe    = surface.find_non_colliding_position(PUPPY_NAME, target, 5, 0.5) or target
 
-  local entity = surface.create_entity{
-    name     = PUPPY_NAME,
-    position = safe,
-    -- "neutral" force is at ceasefire with all forces by default,
-    -- so biters and spitters will never target the puppy.
-    force    = "neutral",
-  }
-  if not entity or not entity.valid then return nil end
-
-  -- Destroy any stale entity before replacing.
+  -- Destroy any stale entity before creating a new one.
   local existing = storage.puppies[player.index]
   if existing and existing.entity and existing.entity.valid then
     existing.entity.destroy()
   end
 
-  storage.puppies[player.index] = { entity = entity, respawn_tick = nil, in_space = false }
+  local entity = surface.create_entity{
+    name     = PUPPY_NAME,
+    position = safe,
+    -- "neutral" force: at ceasefire with everyone by default,
+    -- so biters, turrets, and spitters all ignore the puppy.
+    force    = "neutral",
+  }
+  if not entity or not entity.valid then return nil end
+
+  storage.puppies[player.index] = make_entry{ entity = entity }
   return entity
 end
 
@@ -90,35 +132,97 @@ local function despawn_puppy(player_index)
 end
 
 ------------------------------------------------------------
--- Movement (manual teleport for runtime speed scaling)
+-- Command helpers — smooth native movement
 ------------------------------------------------------------
 
-local function move_puppy_toward_player(player, entry)
+local function cmd_follow(puppy, target_pos, entry)
+  puppy.set_command{
+    type        = defines.command.go_to_location,
+    destination = target_pos,
+    radius      = FOLLOW_RADIUS,
+    distraction = defines.distraction.none,
+    pathfind_flags = {
+      allow_paths_through_own_military = true,
+      prefer_straight_paths            = true,
+    },
+  }
+  entry.last_cmd_pos = { x = target_pos.x, y = target_pos.y }
+  entry.idle = false
+end
+
+local function cmd_wander(puppy, entry)
+  puppy.set_command{
+    type            = defines.command.wander,
+    radius          = WANDER_RADIUS,
+    wander_in_group = false,
+    distraction     = defines.distraction.none,
+  }
+  entry.idle = true
+  entry.last_cmd_pos = nil
+end
+
+------------------------------------------------------------
+-- Movement — called every UPDATE_INTERVAL ticks
+------------------------------------------------------------
+
+local function update_movement(player, entry)
   local puppy = entry.entity
   if not puppy or not puppy.valid then return end
   if not player.character or not player.character.valid then return end
   if puppy.surface ~= player.surface then return end
 
-  local pp   = player.character.position
-  local ep   = puppy.position
-  local dx   = pp.x - ep.x
-  local dy   = pp.y - ep.y
-  local dist = math.sqrt(dx * dx + dy * dy)
+  local pp = player.character.position
+  local ep = puppy.position
+  local d  = dist(pp, ep)
 
-  if dist <= FOLLOW_RADIUS then return end
+  -- 1) Too far behind → teleport near the player, then walk the last bit
+  if d > TELEPORT_DIST then
+    local offset = { x = pp.x + 2, y = pp.y }
+    local safe = puppy.surface.find_non_colliding_position(PUPPY_NAME, offset, 5, 0.5) or offset
+    puppy.teleport(safe)
+    cmd_follow(puppy, pp, entry)
+    return
+  end
 
-  -- Scale speed with the player's current running speed modifier so the puppy
-  -- keeps up even with late-game exoskeletons.
-  local modifier       = player.character_running_speed_modifier
-  local effective_speed = BASE_PUPPY_SPEED * math.max(1, 1 + modifier)
-  local max_move       = effective_speed * FOLLOW_INTERVAL
-  local step           = math.min(max_move, dist - FOLLOW_RADIUS)
+  -- 2) Close enough → gentle wander
+  if d <= FOLLOW_RADIUS then
+    if not entry.idle then
+      cmd_wander(puppy, entry)
+    end
+    return
+  end
 
-  puppy.teleport({
-    x = ep.x + (dx / dist) * step,
-    y = ep.y + (dy / dist) * step,
-  })
+  -- 3) Medium distance → walk toward the player (only re-issue if player moved enough)
+  if entry.idle then
+    -- Was idling, player moved away — start chasing
+    cmd_follow(puppy, pp, entry)
+    return
+  end
+
+  if entry.last_cmd_pos then
+    if dist(pp, entry.last_cmd_pos) < CMD_RETHINK then
+      return  -- player hasn't moved much; let the current command finish
+    end
+  end
+
+  cmd_follow(puppy, pp, entry)
 end
+
+------------------------------------------------------------
+-- Event: AI command completed — re-evaluate immediately
+------------------------------------------------------------
+
+script.on_event(defines.events.on_ai_command_completed, function(event)
+  for player_index, entry in pairs(storage.puppies) do
+    if entry.entity and entry.entity.valid
+       and entry.entity.unit_number == event.unit_number then
+      -- Reset state so the next tick-check re-evaluates
+      entry.last_cmd_pos = nil
+      entry.idle = false
+      break
+    end
+  end
+end)
 
 ------------------------------------------------------------
 -- Player joined / created
@@ -127,11 +231,8 @@ end
 local function schedule_spawn(player_index)
   local existing = storage.puppies[player_index]
   if existing and existing.entity and existing.entity.valid then return end
-  storage.puppies[player_index] = {
-    entity       = nil,
-    -- Wait ~1 second so the character entity is placed before we try to spawn.
-    respawn_tick = game.tick + 60,
-    in_space     = false,
+  storage.puppies[player_index] = make_entry{
+    respawn_tick = game.tick + 60,   -- 1 sec delay for character to be placed
   }
 end
 
@@ -155,8 +256,10 @@ script.on_event(
   function(event)
     for player_index, entry in pairs(storage.puppies) do
       if entry.entity == event.entity then
-        entry.entity      = nil
+        entry.entity = nil
         entry.respawn_tick = event.tick + RESPAWN_DELAY
+        entry.last_cmd_pos = nil
+        entry.idle = false
         break
       end
     end
@@ -174,22 +277,24 @@ script.on_event(defines.events.on_player_changed_surface, function(event)
 
   local entry = storage.puppies[event.player_index]
   if not entry then
-    entry = { entity = nil, respawn_tick = nil, in_space = false }
+    entry = make_entry()
     storage.puppies[event.player_index] = entry
   end
 
   if is_space_surface(player.surface) then
-    -- Player launched to a space platform: remove the puppy.
+    -- Going to space: remove the puppy.
     if entry.entity and entry.entity.valid then
       entry.entity.destroy()
       entry.entity = nil
     end
     entry.in_space     = true
     entry.respawn_tick = nil
+    entry.last_cmd_pos = nil
+    entry.idle         = false
+
   else
-    -- Player landed on a planet: schedule a fresh spawn.
+    -- Landing on a planet: move or schedule respawn.
     if entry.entity and entry.entity.valid then
-      -- Move existing puppy to the new surface.
       local ok = entry.entity.teleport(player.position, player.surface)
       if not ok then
         entry.entity.destroy()
@@ -197,15 +302,19 @@ script.on_event(defines.events.on_player_changed_surface, function(event)
       end
     end
     entry.in_space     = false
-    entry.respawn_tick = entry.respawn_tick or (game.tick + 60)
+    entry.last_cmd_pos = nil
+    entry.idle         = false
+    if not entry.entity or not entry.entity.valid then
+      entry.respawn_tick = entry.respawn_tick or (game.tick + 60)
+    end
   end
 end)
 
 ------------------------------------------------------------
--- Tick loop — movement + respawn
+-- Tick loop — smooth movement + respawn
 ------------------------------------------------------------
 
-script.on_nth_tick(FOLLOW_INTERVAL, function(event)
+script.on_nth_tick(UPDATE_INTERVAL, function(event)
   for player_index, entry in pairs(storage.puppies) do
     local player = game.get_player(player_index)
 
@@ -213,15 +322,14 @@ script.on_nth_tick(FOLLOW_INTERVAL, function(event)
       despawn_puppy(player_index)
 
     elseif entry.in_space then
-      -- Puppy doesn't exist in space; nothing to do.
+      -- No puppy in space; nothing to do.
 
     elseif entry.entity and entry.entity.valid then
-      move_puppy_toward_player(player, entry)
+      update_movement(player, entry)
 
     elseif entry.respawn_tick and event.tick >= entry.respawn_tick then
       local new_puppy = spawn_puppy(player)
       if not new_puppy then
-        -- Character not ready yet; retry after another delay.
         entry.respawn_tick = event.tick + RESPAWN_DELAY
       end
     end

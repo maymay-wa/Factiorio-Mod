@@ -5,7 +5,7 @@
 -- Configuration
 ------------------------------------------------------------
 
-local DEV_MODE = false
+local DEV_MODE = true
 
 -- Player-facing tuning (see settings.lua).
 local RECIPE_MULT   = settings.startup["portal-recipe-cost-multiplier"].value
